@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bubble dimensions -->
+    <dimen name="bubble_size">56dp</dimen>
+    
+    <!-- Control panel dimensions -->
+    <dimen name="control_panel_max_width">320dp</dimen>
+    
+    <!-- Function button dimensions -->
+    <dimen name="panel_function_button_size">58dp</dimen>
+    <!-- Kích thước cho vùng chạm của các nút icon (lớn hơn icon một chút) -->
+    <dimen name="panel_icon_touch_target_size">58dp</dimen>
+    <dimen name="panel_grid_spacing">5dp</dimen>
+    <dimen name="panel_icon_size">24dp</dimen>
+    <dimen name="panel_text_size">8sp</dimen>
+    !-- Khoảng cách chung giữa các nút -->
+    <dimen name="panel_button_spacing">8dp</dimen>
+    <!-- Card dimensions -->
+    <dimen name="function_card_height">100dp</dimen>
+    
+    <!-- Spacing -->
+    <dimen name="grid_spacing">8dp</dimen>
+    <dimen name="card_margin">8dp</dimen>
+    <dimen name="panel_margin">16dp</dimen>
+    <dimen name="panel_corner_radius">20dp</dimen>
+    <dimen name="panel_elevation">16dp</dimen>
+</resources>

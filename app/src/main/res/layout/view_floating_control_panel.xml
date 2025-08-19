@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_margin="@dimen/panel_margin"
+    app:cardCornerRadius="@dimen/panel_corner_radius"
+    app:cardElevation="@dimen/panel_elevation"
+    app:cardBackgroundColor="@color/surface">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <!-- Hàng điều khiển trên cùng: Home và Di chuyển -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/buttonHome"
+                android:layout_width="@dimen/panel_icon_touch_target_size"
+                android:layout_height="@dimen/panel_icon_touch_target_size"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Về trang chủ"
+                android:src="@drawable/ic_home"
+                app:tint="@color/primary" />
+            <!-- THÊM: Khoảng trống để tạo khoảng cách -->
+            <Space
+                android:layout_width="@dimen/panel_button_spacing"
+                android:layout_height="wrap_content" />
+
+            <ImageButton
+                android:id="@+id/buttonMove"
+                android:layout_width="@dimen/panel_icon_touch_target_size"
+                android:layout_height="@dimen/panel_icon_touch_target_size"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Di chuyển panel"
+                android:src="@drawable/ic_drag_indicator"
+                app:tint="@color/secondary_text" />
+        </LinearLayout>
+
+        <!-- Đường phân cách -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginBottom="12dp"
+            android:background="@color/divider" />
+
+
+        <!-- Lưới chức năng -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recyclerViewFunctions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:nestedScrollingEnabled="false" />
+
+        <!-- Nút chọn ngôn ngữ -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonLanguageSelection"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="EN → VI"
+            android:textSize="8sp"
+            app:cornerRadius="16dp"
+            app:icon="@drawable/ic_language"
+            app:iconGravity="start" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

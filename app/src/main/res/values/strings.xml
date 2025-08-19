@@ -1,0 +1,58 @@
+<resources>
+    <string name="app_name">App Translate</string>
+    
+    <!-- Bottom Navigation -->
+    <string name="nav_home">Trang chủ</string>
+    <string name="nav_translate">Dịch</string>
+    
+    <!-- Menu Items -->
+    <string name="menu_help">Trợ giúp</string>
+    <string name="menu_settings">Cài đặt</string>
+    
+    <!-- Fragment Titles -->
+    <string name="title_home">Màn hình Trang chủ</string>
+    <string name="title_translate">Màn hình Dịch</string>
+    <string name="title_help">Màn hình Trợ giúp</string>
+    <string name="title_settings">Màn hình Cài đặt</string>
+    
+    <!-- Language Selection -->
+    <string name="swap_languages">Hoán đổi ngôn ngữ</string>
+    <string name="select_source_language">Chọn ngôn ngữ nguồn</string>
+    <string name="select_target_language">Chọn ngôn ngữ đích</string>
+    <string name="search_language_hint">Tìm ngôn ngữ…</string>
+    <string name="recent_languages">Ngôn ngữ gần đây</string>
+    <string name="all_languages">Tất cả ngôn ngữ</string>
+    <string name="no_languages_found">Không tìm thấy ngôn ngữ nào</string>
+    
+    <!-- Translation Controls -->
+    <string name="translation_source">Nguồn dịch</string>
+    <string name="translation_source_ai">Dịch AI</string>
+    <string name="translation_source_google">Google Dịch Trực tuyến</string>
+    <string name="translation_source_offline">Dịch Ngoại tuyến</string>
+    <string name="ai_settings">Cài đặt AI</string>
+    <string name="translation_mode_simple">Đơn giản</string>
+    <string name="translation_mode_advanced">Nâng cao</string>
+    <string name="ai_settings_title">Cài đặt AI</string>
+    
+    <!-- Function Grid -->
+    <string name="function_global_translate">Dịch toàn cầu</string>
+    <string name="function_global_translate_desc">Dịch toàn bộ nội dung chỉ với 1 cú nhấp.</string>
+    <string name="function_area_translate">Dịch khu vực</string>
+    <string name="function_area_translate_desc">Chọn khu vực cụ thể trên màn hình để dịch chính xác nội dung đã chọn.</string>
+    <string name="function_auto_global_translate">Dịch toàn cầu tự động</string>
+    <string name="function_auto_global_translate_desc">Dịch ngay lập tức văn bản trên màn hình. Hoàn hảo cho truyện tranh, tiểu thuyết.</string>
+    <string name="function_auto_area_translate">Dịch vùng tự động</string>
+    <string name="function_auto_area_translate_desc">Tự động dịch 1 phần của màn hình, phù hợp với phụ đề phim và game.</string>
+    <string name="function_image_translate">Dịch ảnh</string>
+    <string name="function_image_translate_desc">Dịch văn bản từ ảnh chụp hoặc ảnh trong thư viện.</string>
+    <string name="function_copy_text">Sao chép văn bản</string>
+    <string name="function_copy_text_desc">Sao chép bất kỳ văn bản nào trên màn hình vào bộ nhớ tạm.</string>
+    
+    <!-- Floating Bubble -->
+    <string name="bubble_description">Nút nổi dịch thuật</string>
+    <string name="function_icon">Icon chức năng</string>
+    <string name="overlay_permission_required">Cần cấp quyền hiển thị trên các ứng dụng khác</string>
+    <string name="screen_capture_permission_required">Cần có quyền quay màn hình để sử dụng tính năng dịch</string>
+    <string name="overlay_service_running">Dịch vụ nút nổi đang chạy</string>
+    <string name="overlay_service_description">Nút nổi đang hoạt động</string>
+</resources>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/bubbleContainer"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+    
+    <!-- Nút nổi chính -->
+    <FrameLayout
+        android:id="@+id/bubbleView"
+        android:layout_width="@dimen/bubble_size"
+        android:layout_height="@dimen/bubble_size"
+        android:background="@drawable/bubble_background"
+        android:elevation="8dp">
+
+        <ImageView
+            android:id="@+id/ivBubbleIcon"
+            android:layout_width="25dp"
+            android:layout_height="25dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_translate"
+            app:tint="@color/white"
+            android:contentDescription="@string/bubble_description" />
+    </FrameLayout>
+    
+    <!-- Panel điều khiển - Mặc định ẩn -->
+    <include
+        android:id="@+id/controlPanel"
+        layout="@layout/view_floating_control_panel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+</FrameLayout>

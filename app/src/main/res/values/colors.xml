@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- Material 3 Colors -->
+    <color name="primary">#6750A4</color>
+    <color name="primary_color">#6750A4</color>
+    <color name="primary_container">#EADDFF</color>
+    <color name="secondary">#625B71</color>
+    <color name="secondary_container">#E8DEF8</color>
+    <color name="surface">#FFFBFE</color>
+    <color name="surface_variant">#E7E0EC</color>
+    <color name="background_light">#FFFBFE</color>
+    <color name="primary_text">#1C1B1F</color>
+    <color name="secondary_text">#49454F</color>
+    <color name="outline">#79747E</color>
+    <color name="outline_variant">#CAC4D0</color>
+    <color name="ripple_color">#20000000</color> <!-- Màu gợn sóng khi nhấn, màu đen trong suốt 12.5% -->
+    <color name="divider">#1F000000</color>    <!-- Màu đường kẻ phân cách, màu đen trong suốt 12% -->
+    <string name="function_icon_description">Biểu tượng chức năng</string>
+</resources>
