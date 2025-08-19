@@ -66,6 +66,18 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toBottomOf="@+id/btn_source_language" />
 
+        <ImageButton
+            android:id="@+id/btn_ai_settings"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/ai_settings"
+            android:src="@drawable/ic_settings"
+            android:visibility="gone" app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/spinner_translation_source"
+            app:layout_constraintBottom_toBottomOf="@id/spinner_translation_source"
+            tools:visibility="visible" />
+
         <!-- Hàng 3: Toggle Group chọn chế độ dịch -->
         <com.google.android.material.button.MaterialButtonToggleGroup
             android:id="@+id/toggle_translation_mode"

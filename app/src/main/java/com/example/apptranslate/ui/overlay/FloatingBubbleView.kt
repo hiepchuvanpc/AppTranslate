@@ -450,7 +450,7 @@ class FloatingBubbleView(
         binding.controlPanel.root.viewTreeObserver.addOnGlobalLayoutListener(
             object : ViewTreeObserver.OnGlobalLayoutListener {
                 override fun onGlobalLayout() {
-                    // Xóa listener đi để tránh bị gọi lại nhiều lần
+                    // Xóa listener để tránh bị gọi lại nhiều lần
                     binding.controlPanel.root.viewTreeObserver.removeOnGlobalLayoutListener(this)
                     adjustPanelPosition()
                 }

@@ -16,6 +16,9 @@
         <action
             android:id="@+id/action_homeFragment_to_functionSettingsFragment"
             app:destination="@id/functionSettingsFragment" />
+        <action
+        android:id="@+id/action_homeFragment_to_aiSettingsFragment"
+        app:destination="@id/aiSettingsFragment" />
     </fragment>
 
     <fragment
@@ -27,19 +30,19 @@
             android:id="@+id/action_translateFragment_to_languageSelectionFragment"
             app:destination="@id/languageSelectionFragment" />
     </fragment>
-        
+
     <fragment
         android:id="@+id/helpFragment"
         android:name="com.example.apptranslate.ui.HelpFragment"
         android:label="@string/menu_help"
         tools:layout="@layout/fragment_help" />
-        
+
     <fragment
         android:id="@+id/settingsFragment"
         android:name="com.example.apptranslate.ui.SettingsFragment"
         android:label="@string/menu_settings"
         tools:layout="@layout/fragment_settings" />
-        
+
     <fragment
         android:id="@+id/languageSelectionFragment"
         android:name="com.example.apptranslate.ui.LanguageSelectionFragment"
@@ -50,7 +53,7 @@
             app:argType="boolean"
             android:defaultValue="true" />
     </fragment>
-    
+
     <fragment
         android:id="@+id/functionSettingsFragment"
         android:name="com.example.apptranslate.ui.FunctionSettingsFragment"
@@ -60,4 +63,11 @@
             android:name="functionType"
             app:argType="string" />
     </fragment>
+
+    <fragment
+        android:id="@+id/aiSettingsFragment"
+        android:name="com.example.apptranslate.ui.AiSettingsFragment"
+        android:label="@string/ai_settings_title"
+        tools:layout="@layout/fragment_ai_settings" />
+
 </navigation>

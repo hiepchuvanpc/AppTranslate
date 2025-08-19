@@ -158,7 +158,7 @@ class HomeFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
+        setupAiSettingsButton() // ✨ THÊM HÀM NÀY
         // Initialize MediaProjectionManager
         mediaProjectionManager = requireContext().getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
@@ -208,26 +208,41 @@ class HomeFragment : Fragment() {
             TranslationSource.OFFLINE
         )
 
-        val spinnerAdapter = TranslationSourceAdapter(
+        val spinnerAdapter = ArrayAdapter(
             requireContext(),
-            translationSources
-        ) {
-            // Callback khi nhấn vào icon cài đặt AI
-            Toast.makeText(requireContext(), "Điều hướng đến cài đặt AI", Toast.LENGTH_SHORT).show()
-            // TODO: Navigate to AI settings
+            android.R.layout.simple_spinner_item,
+            translationSources.map {
+                when(it) {
+                    TranslationSource.AI -> getString(R.string.translation_source_ai)
+                    TranslationSource.GOOGLE -> getString(R.string.translation_source_google)
+                    TranslationSource.OFFLINE -> getString(R.string.translation_source_offline)
+                }
+            }
+        ).also { adapter ->
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
-
         binding.languageCard.spinnerTranslationSource.adapter = spinnerAdapter
 
-        // Xử lý sự kiện chọn item trong spinner
         binding.languageCard.spinnerTranslationSource.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 val selectedSource = translationSources[position]
                 viewModel.setTranslationSource(selectedSource)
+
+                // ✨ CẬP NHẬT LOGIC HIỂN THỊ NÚT CÀI ĐẶT ✨
+                binding.languageCard.btnAiSettings.visibility = if (selectedSource == TranslationSource.AI) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
             }
 
-            override fun onNothingSelected(parent: AdapterView<*>?) {
-                // Do nothing
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
+        // ✨ THÊM HÀM MỚI NÀY ✨
+        private fun setupAiSettingsButton() {
+            binding.languageCard.btnAiSettings.setOnClickListener {
+                findNavController().navigate(R.id.action_homeFragment_to_aiSettingsFragment)
             }
         }
 
