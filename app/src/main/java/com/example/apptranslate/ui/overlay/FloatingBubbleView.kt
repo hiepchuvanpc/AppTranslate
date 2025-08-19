@@ -24,6 +24,7 @@ import com.example.apptranslate.ui.overlay.model.FunctionItem
 import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.*
 import kotlin.math.abs
+import android.view.ViewTreeObserver
 
 /**
  * Nút nổi đa chức năng với các hành vi nâng cao:
@@ -53,13 +54,13 @@ class FloatingBubbleView(
     private lateinit var windowManager: WindowManager
     private lateinit var layoutParams: WindowManager.LayoutParams
     private var mediaProjection: MediaProjection? = null
-    
+
     // Control panel binding
     private lateinit var controlPanelBinding: ViewFloatingControlPanelBinding
-    
+
     // Function adapter
     private lateinit var functionAdapter: FunctionAdapter
-    
+
     // State flags
     private var isPanelVisible = false
 
@@ -89,7 +90,7 @@ class FloatingBubbleView(
     init {
         // Sử dụng ContextThemeWrapper để đảm bảo có theme Material Components khi inflate layout
         val themedContext = android.view.ContextThemeWrapper(
-            context, 
+            context,
             com.google.android.material.R.style.Theme_MaterialComponents_Light
         )
         val inflater = LayoutInflater.from(themedContext)
@@ -101,7 +102,7 @@ class FloatingBubbleView(
 
         // Khởi tạo GestureDetector với GestureListener tùy chỉnh
         gestureDetector = GestureDetector(context, GestureListener())
-        
+
         // Khởi tạo Control Panel binding - đảm bảo áp dụng theme cho view
         val themedPanel = binding.controlPanel.root
         controlPanelBinding = ViewFloatingControlPanelBinding.bind(themedPanel)
@@ -118,31 +119,31 @@ class FloatingBubbleView(
             binding.controlPanel.root.visibility = View.GONE
             binding.bubbleView.visibility = View.VISIBLE
             isPanelVisible = false
-            
+
             snapToEdge()
             startCollapseTimer()
         }
     }
-    
+
     /**
      * Xử lý khi thay đổi cấu hình (xoay màn hình)
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        
+
         // Cập nhật kích thước màn hình mới
         updateScreenDimensions()
-        
+
         // Cập nhật số cột trong grid layout dựa trên hướng màn hình
         val recyclerView = controlPanelBinding.recyclerViewFunctions
         val spanCount = if (newConfig.orientation == Configuration.ORIENTATION_PORTRAIT) 2 else 3
-        
+
         if (recyclerView.layoutManager is GridLayoutManager) {
             (recyclerView.layoutManager as GridLayoutManager).spanCount = spanCount
         } else {
             recyclerView.layoutManager = GridLayoutManager(context, spanCount)
         }
-        
+
         // Nếu panel đang mở, cần điều chỉnh lại vị trí
         if (isPanelVisible) {
             // Cho thời gian để layout được vẽ lại với kích thước mới
@@ -156,14 +157,14 @@ class FloatingBubbleView(
                 updateViewLayout()
             }
         }
-        
+
         Log.d(TAG, "Configuration changed: orientation=${newConfig.orientation}, spanCount=$spanCount")
     }
 
     private fun setupBubbleView() {
         binding.ivBubbleIcon.setImageResource(R.drawable.ic_translate)
     }
-    
+
     /**
      * Cập nhật kích thước màn hình
      */
@@ -195,28 +196,28 @@ class FloatingBubbleView(
             val orientation = resources.configuration.orientation
             val spanCount = if (orientation == Configuration.ORIENTATION_PORTRAIT) 2 else 3
             recyclerView.layoutManager = GridLayoutManager(context, spanCount)
-            
+
             // Thiết lập adapter và dữ liệu
             functionAdapter = FunctionAdapter { item ->
                 handleFunctionClick(item)
             }
             recyclerView.adapter = functionAdapter
-            
+
             // Tạo danh sách chức năng
             val functionItems = createFunctionItems()
             functionAdapter.submitList(functionItems)
-            
+
             // Thiết lập các nút điều khiển
             controlPanelBinding.buttonHome.setOnClickListener {
                 // TODO: Xử lý sự kiện về trang chủ
                 closePanel()
             }
-            
+
             controlPanelBinding.buttonMove.setOnClickListener {
                 // Đóng panel khi nhấp vào nút di chuyển
                 closePanel()
             }
-            
+
             // Thiết lập nút chọn ngôn ngữ
             controlPanelBinding.buttonLanguageSelection.setOnClickListener {
                 // TODO: Thêm logic chọn ngôn ngữ
@@ -226,7 +227,7 @@ class FloatingBubbleView(
             Log.e(TAG, "Error setting up control panel", e)
         }
     }
-    
+
     /**
      * Tạo danh sách các nút chức năng cho panel
      */
@@ -270,7 +271,7 @@ class FloatingBubbleView(
             )
         )
     }
-    
+
     /**
      * Xử lý sự kiện khi người dùng nhấp vào một nút chức năng
      */
@@ -337,7 +338,7 @@ class FloatingBubbleView(
 
                     // Khôi phục trạng thái mặc định
                     restoreDefaultState()
-                    
+
                     startCollapseTimer()
                     isDragging = false
                 }
@@ -345,7 +346,7 @@ class FloatingBubbleView(
             true
         }
     }
-    
+
     /**
      * Khôi phục trạng thái mặc định của nút nổi
      */
@@ -353,7 +354,7 @@ class FloatingBubbleView(
         // Nếu không trong trạng thái panel mở, thì đặt lại icon
         if (!isPanelVisible) {
             binding.bubbleView.background = resources.getDrawable(
-                R.drawable.bubble_background, 
+                R.drawable.bubble_background,
                 context.theme
             )
             binding.ivBubbleIcon.setImageResource(R.drawable.ic_translate)
@@ -380,34 +381,34 @@ class FloatingBubbleView(
 
         override fun onLongPress(e: MotionEvent) {
             android.util.Log.d(TAG, "Bubble Long Pressed - Activating magnifier mode!")
-            
+
             // Đóng panel nếu đang mở
             if (isPanelVisible) {
                 closePanel()
             }
-            
+
             // Thay đổi thành chế độ kính lúp
             activateMagnifierMode()
-            
+
             // Đặt cờ để thông báo rằng nhấn giữ đã xảy ra
             longPressOccurred = true
             isDragging = false
         }
-        
+
         override fun onScroll(
-            e1: MotionEvent?, 
-            e2: MotionEvent, 
-            distanceX: Float, 
+            e1: MotionEvent?,
+            e2: MotionEvent,
+            distanceX: Float,
             distanceY: Float
         ): Boolean {
             // Kiểm tra nếu panel đang mở thì không cho phép kéo
             if (isPanelVisible) return false
-            
+
             // Nếu đã di chuyển đủ xa, đánh dấu là đang kéo
             if (!isDragging && e1 != null) {
                 val deltaX = e2.rawX - e1.rawX
                 val deltaY = e2.rawY - e1.rawY
-                
+
                 if (abs(deltaX) > 10 || abs(deltaY) > 10) {
                     isDragging = true
                 }
@@ -415,65 +416,63 @@ class FloatingBubbleView(
             return isDragging
         }
     }
-    
+
     /**
      * Kích hoạt chế độ kính lúp (thay đổi giao diện nút nổi)
      */
     private fun activateMagnifierMode() {
         // Thay đổi icon thành kính lúp
         binding.ivBubbleIcon.setImageResource(R.drawable.ic_search)
-        
+
         // Thay đổi nền thành trong suốt
         binding.bubbleView.background = null
-        
+
         // Thêm các hiệu ứng đặc biệt cho chế độ kính lúp nếu cần
     }
-    
+
     /**
      * Mở panel điều khiển
      */
     private fun openPanel() {
         Log.d(TAG, "Opening control panel")
-        
-        // Đánh dấu trạng thái đang mở panel
         isPanelVisible = true
-        
-        // Thay đổi kích thước của WindowManager LayoutParams để chứa panel
         layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
         layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
-        
-        // Tạo hiệu ứng chuyển tiếp mượt mà
+
         TransitionManager.beginDelayedTransition(binding.bubbleContainer)
-        
-        // Ẩn nút nổi và hiện panel
+
         binding.bubbleView.visibility = View.GONE
         binding.controlPanel.root.visibility = View.VISIBLE
-        
-        // Cập nhật layout (đo lường lần đầu)
+
         updateViewLayout()
-        
-        // Chờ một chút để panel được đo lường, sau đó mới điều chỉnh vị trí
-        postDelayed({
-            adjustPanelPosition()
-        }, PANEL_MEASURE_DELAY)
-        
-        // Hủy timer thu gọn
+
+        // SỬA LẠI: Thay thế postDelayed bằng ViewTreeObserver
+        binding.controlPanel.root.viewTreeObserver.addOnGlobalLayoutListener(
+            object : ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    // Xóa listener đi để tránh bị gọi lại nhiều lần
+                    binding.controlPanel.root.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                    adjustPanelPosition()
+                }
+            }
+        )
+
         cancelCollapseTimer()
     }
-    
+
     /**
      * Điều chỉnh vị trí của panel để không bị khuất
      */
     private fun adjustPanelPosition() {
         val panelWidth = binding.controlPanel.root.width
         val panelHeight = binding.controlPanel.root.height
-        
+
         Log.d(TAG, "Adjusting panel position. Current: x=${layoutParams.x}, y=${layoutParams.y}, Panel size: $panelWidth x $panelHeight")
-        
+
         // Tính toán vị trí mới
         var newX = layoutParams.x
         var newY = layoutParams.y
-        
+
         // Điều chỉnh X để panel không bị tràn ra khỏi màn hình
         if (layoutParams.x < screenWidth / 2) {
             // Nút nổi ở bên trái, không cần điều chỉnh X
@@ -483,16 +482,16 @@ class FloatingBubbleView(
                 newX = screenWidth - panelWidth
             }
         }
-        
+
         // Điều chỉnh Y để panel không bị tràn ra khỏi màn hình
         if (layoutParams.y + panelHeight > screenHeight) {
             newY = screenHeight - panelHeight
         }
-        
+
         // Đảm bảo X, Y không âm
         if (newX < 0) newX = 0
         if (newY < 0) newY = 0
-        
+
         // Nếu cần điều chỉnh vị trí
         if (newX != layoutParams.x || newY != layoutParams.y) {
             Log.d(TAG, "Panel position adjusted to: x=$newX, y=$newY")
@@ -501,30 +500,30 @@ class FloatingBubbleView(
             updateViewLayout()
         }
     }
-    
+
     /**
      * Đóng panel điều khiển
      */
     private fun closePanel() {
         Log.d(TAG, "Closing control panel")
-        
+
         // Đánh dấu đã đóng panel
         isPanelVisible = false
-        
+
         // Tạo hiệu ứng chuyển tiếp mượt mà
         TransitionManager.beginDelayedTransition(binding.bubbleContainer)
-        
+
         // Ẩn panel và hiện nút nổi
         binding.controlPanel.root.visibility = View.GONE
         binding.bubbleView.visibility = View.VISIBLE
-        
+
         // Đặt lại kích thước layout params về kích thước nút nổi
         layoutParams.width = resources.getDimensionPixelSize(R.dimen.bubble_size)
         layoutParams.height = resources.getDimensionPixelSize(R.dimen.bubble_size)
-        
+
         // Cập nhật layout
         updateViewLayout()
-        
+
         // Khởi động lại timer thu gọn
         startCollapseTimer()
     }
@@ -532,13 +531,13 @@ class FloatingBubbleView(
     private fun snapToEdge() {
         // Kích thước view hiện tại (nút nổi hoặc panel)
         val currentWidth = resources.getDimensionPixelSize(R.dimen.bubble_size)
-        
+
         // Tính toán vị trí đích
         val middle = screenWidth / 2
         val endX = if (layoutParams.x < middle - currentWidth / 2) 0 else screenWidth - currentWidth
-        
+
         Log.d(TAG, "Snapping to edge. Current x=${layoutParams.x}, Target x=$endX")
-        
+
         val animator = ValueAnimator.ofInt(layoutParams.x, endX).apply {
             duration = SNAP_ANIMATION_DURATION
             interpolator = DecelerateInterpolator()
@@ -553,7 +552,7 @@ class FloatingBubbleView(
     private fun startCollapseTimer() {
         // Không bắt đầu timer nếu panel đang mở
         if (isPanelVisible) return
-        
+
         collapseJob?.cancel()
         collapseJob = coroutineScope.launch {
             delay(COLLAPSE_DELAY_MS)
@@ -571,7 +570,7 @@ class FloatingBubbleView(
     private fun collapseBubble() {
         // Không thu gọn nếu panel đang mở hoặc đã thu gọn
         if (isCollapsed || isPanelVisible) return
-        
+
         isCollapsed = true
         val translationX = if (layoutParams.x == 0) -width / 2f else width / 2f
         this.animate()
@@ -584,10 +583,10 @@ class FloatingBubbleView(
     private fun expandBubble() {
         if (!isCollapsed) return
         isCollapsed = false
-        
+
         // Khôi phục trạng thái mặc định
         restoreDefaultState()
-        
+
         // Hoạt ảnh mở rộng
         this.animate()
             .translationX(0f)
@@ -618,7 +617,7 @@ class FloatingBubbleView(
     fun setMediaProjection(projection: MediaProjection?) {
         this.mediaProjection = projection
     }
-    
+
     /**
      * Được gọi từ bên ngoài để cập nhật ngôn ngữ hiển thị trên nút chọn ngôn ngữ
      */
@@ -629,7 +628,7 @@ class FloatingBubbleView(
             android.util.Log.e(TAG, "Error updating language pair", e)
         }
     }
-    
+
     /**
      * Thiết lập callback cho nút chọn ngôn ngữ
      */
@@ -645,7 +644,7 @@ class FloatingBubbleView(
             android.util.Log.e(TAG, "Error setting language selection callback", e)
         }
     }
-    
+
     /**
      * Trả về trạng thái của panel
      */

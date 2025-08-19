@@ -113,16 +113,6 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Confirm FAB -->
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/fabConfirm"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="end"
-            android:contentDescription="Xác nhận"
-            android:src="@drawable/ic_check"
-            app:tint="@color/white" />
-
     </LinearLayout>
 
 </FrameLayout>

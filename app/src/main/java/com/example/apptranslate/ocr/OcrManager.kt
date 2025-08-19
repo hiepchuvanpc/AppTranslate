@@ -77,13 +77,13 @@ interface OcrListener {
  * Manager chính để xử lý OCR đa ngôn ngữ thông minh
  */
 class OcrManager private constructor() { // 1. Làm constructor private
-    
+
     // Cache các recognizer để tái sử dụng
     private val recognizers = mutableMapOf<ScriptType, TextRecognizer>()
-    
+
     // Kích thước tối đa cho ảnh đầu vào
     private val maxImageDimension = 1280
-    
+
     /**
      * Hàm chính để nhận dạng văn bản từ ảnh
      * @param bitmap Ảnh cần nhận dạng
@@ -92,20 +92,20 @@ class OcrManager private constructor() { // 1. Làm constructor private
      */
     fun recognizeText(bitmap: Bitmap, sourceLanguageCode: String, listener: OcrListener) {
         val startTime = System.currentTimeMillis()
-        
+
         try {
             // 1. Tiền xử lý ảnh
             val preprocessedBitmap = preprocessImage(bitmap)
-            
+
             // 2. Xác định hệ chữ từ mã ngôn ngữ
             val scriptType = getScriptTypeFromLanguageCode(sourceLanguageCode)
-            
+
             // 3. Lấy recognizer phù hợp
             val recognizer = getRecognizerForScript(scriptType)
-            
+
             // 4. Tạo InputImage từ bitmap đã xử lý
             val inputImage = InputImage.fromBitmap(preprocessedBitmap, 0)
-            
+
             // 5. Thực hiện nhận dạng
             recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
@@ -116,12 +116,12 @@ class OcrManager private constructor() { // 1. Làm constructor private
                 .addOnFailureListener { exception ->
                     listener.onFailure(exception)
                 }
-                
+
         } catch (e: Exception) {
             listener.onFailure(e)
         }
     }
-    
+
     /**
      * Chuyển đổi mã ngôn ngữ thành ScriptType
      * @param langCode Mã ngôn ngữ ISO (ví dụ: "ja", "zh-cn", "ko")
@@ -136,7 +136,7 @@ class OcrManager private constructor() { // 1. Làm constructor private
             else -> ScriptType.LATIN       // Mặc định cho các ngôn ngữ khác
         }
     }
-    
+
     /**
      * Lấy hoặc tạo recognizer cho hệ chữ cụ thể
      * @param script Loại hệ chữ
@@ -145,7 +145,7 @@ class OcrManager private constructor() { // 1. Làm constructor private
     private fun getRecognizerForScript(script: ScriptType): TextRecognizer {
         // Kiểm tra cache trước
         recognizers[script]?.let { return it }
-        
+
         // Tạo recognizer mới nếu chưa có
         val recognizer = when (script) {
             ScriptType.CHINESE -> {
@@ -169,12 +169,12 @@ class OcrManager private constructor() { // 1. Làm constructor private
                 TextRecognition.getClient(options)
             }
         }
-        
+
         // Lưu vào cache
         recognizers[script] = recognizer
         return recognizer
     }
-    
+
     /**
      * Tiền xử lý ảnh để tối ưu cho OCR
      * @param bitmap Ảnh gốc
@@ -182,16 +182,16 @@ class OcrManager private constructor() { // 1. Làm constructor private
      */
     private fun preprocessImage(bitmap: Bitmap): Bitmap {
         var processedBitmap = bitmap
-        
+
         // 1. Giảm kích thước ảnh nếu quá lớn
         processedBitmap = resizeImageIfNeeded(processedBitmap)
-        
+
         // 2. Tăng độ tương phản và chuyển sang grayscale
         processedBitmap = enhanceContrast(processedBitmap)
-        
+
         return processedBitmap
     }
-    
+
     /**
      * Giảm kích thước ảnh nếu vượt quá ngưỡng cho phép
      * @param bitmap Ảnh gốc
@@ -200,23 +200,23 @@ class OcrManager private constructor() { // 1. Làm constructor private
     private fun resizeImageIfNeeded(bitmap: Bitmap): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
-        
+
         if (width <= maxImageDimension && height <= maxImageDimension) {
             return bitmap
         }
-        
+
         val scaleFactor = if (width > height) {
             maxImageDimension.toFloat() / width
         } else {
             maxImageDimension.toFloat() / height
         }
-        
+
         val newWidth = (width * scaleFactor).toInt()
         val newHeight = (height * scaleFactor).toInt()
-        
+
         return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
     }
-    
+
     /**
      * Tăng độ tương phản và chuyển sang grayscale
      * @param bitmap Ảnh gốc
@@ -225,37 +225,37 @@ class OcrManager private constructor() { // 1. Làm constructor private
     private fun enhanceContrast(bitmap: Bitmap): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
-        
+
         val processedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(processedBitmap)
-        
+
         // Tạo matrix để chuyển sang grayscale và tăng contrast
         val colorMatrix = ColorMatrix().apply {
             // Chuyển sang grayscale
             setSaturation(0f)
-            
+
             // Tăng contrast (điều chỉnh các giá trị này để tối ưu)
             val contrast = 1.5f
             val brightness = 10f
-            
+
             val contrastMatrix = ColorMatrix(floatArrayOf(
                 contrast, 0f, 0f, 0f, brightness,
                 0f, contrast, 0f, 0f, brightness,
                 0f, 0f, contrast, 0f, brightness,
                 0f, 0f, 0f, 1f, 0f
             ))
-            
+
             postConcat(contrastMatrix)
         }
-        
+
         val paint = Paint().apply {
             colorFilter = ColorMatrixColorFilter(colorMatrix)
         }
-        
+
         canvas.drawBitmap(bitmap, 0f, 0f, paint)
         return processedBitmap
     }
-    
+
     /**
      * Chuyển đổi kết quả từ ML Kit thành format của ứng dụng
      * @param visionText Kết quả từ ML Kit
@@ -268,31 +268,38 @@ class OcrManager private constructor() { // 1. Làm constructor private
         scriptType: ScriptType,
         processingTimeMs: Long
     ): OcrResult {
-        val textBlocks = visionText.textBlocks.map { block -> // `block` ở đây là Text.TextBlock
+        val textBlocks = visionText.textBlocks.map { block ->
             val lines = block.lines.map { line ->
                 val elements = line.elements.map { element ->
                     TextElement(
                         text = element.text,
                         boundingBox = element.boundingBox,
-                        confidence = element.confidence // ĐÚNG: 'element' có thuộc tính confidence
+                        confidence = element.confidence
                     )
                 }
                 TextLine(
                     text = line.text,
                     boundingBox = line.boundingBox,
-                    confidence = line.confidence, // ĐÚNG: 'line' có thuộc tính confidence
+                    confidence = line.confidence,
                     elements = elements
                 )
             }
+
+            // TÍNH TOÁN CONFIDENCE CHO BLOCK
+            // ML Kit TextBlock không cung cấp confidence.
+            // Chúng ta sẽ tính giá trị trung bình từ confidence của các dòng (TextLine) con.
+            val blockConfidence = lines.mapNotNull { it.confidence }
+                                    .takeIf { it.isNotEmpty() }
+                                    ?.average()?.toFloat()
+
             TextBlock(
                 text = block.text,
                 boundingBox = block.boundingBox,
-                // SỬA LẠI: 'block' không có confidence, tính trung bình từ các dòng con
-                confidence = lines.mapNotNull { it.confidence }.average().toFloat().takeIf { !it.isNaN() },
+                confidence = blockConfidence,
                 lines = lines
             )
         }
-        
+
         return OcrResult(
             textBlocks = textBlocks,
             fullText = visionText.text,
@@ -300,7 +307,7 @@ class OcrManager private constructor() { // 1. Làm constructor private
             scriptType = scriptType
         )
     }
-    
+
     /**
      * Lọc kết quả OCR theo ngưỡng confidence
      * @param result Kết quả OCR gốc
@@ -313,34 +320,34 @@ class OcrManager private constructor() { // 1. Làm constructor private
             if (blockConfidence != null && blockConfidence < minConfidence) {
                 return@mapNotNull null
             }
-            
+
             val filteredLines = block.lines.mapNotNull { line ->
                 val lineConfidence = line.confidence
                 if (lineConfidence != null && lineConfidence < minConfidence) {
                     return@mapNotNull null
                 }
-                
+
                 val filteredElements = line.elements.filter { element ->
                     val elementConfidence = element.confidence
                     elementConfidence == null || elementConfidence >= minConfidence
                 }
-                
+
                 if (filteredElements.isEmpty()) null
                 else line.copy(elements = filteredElements)
             }
-            
+
             if (filteredLines.isEmpty()) null
             else block.copy(lines = filteredLines)
         }
-        
+
         val filteredFullText = filteredBlocks.joinToString("\n") { it.text }
-        
+
         return result.copy(
             textBlocks = filteredBlocks,
             fullText = filteredFullText
         )
     }
-    
+
     /**
      * Giải phóng tài nguyên
      */
@@ -354,7 +361,7 @@ class OcrManager private constructor() { // 1. Làm constructor private
         }
         recognizers.clear()
     }
-    
+
     /**
      * Companion object chứa các utility functions và singleton pattern
      */
@@ -367,7 +374,7 @@ class OcrManager private constructor() { // 1. Làm constructor private
                 instance ?: OcrManager().also { instance = it }
             }
         }
-        
+
         /**
          * Kiểm tra xem ngôn ngữ có được hỗ trợ hay không
          * @param languageCode Mã ngôn ngữ
@@ -383,7 +390,7 @@ class OcrManager private constructor() { // 1. Làm constructor private
             )
             return supportedLanguages.contains(languageCode.lowercase())
         }
-        
+
         /**
          * Lấy danh sách tất cả ngôn ngữ được hỗ trợ
          * @return Set mã ngôn ngữ được hỗ trợ

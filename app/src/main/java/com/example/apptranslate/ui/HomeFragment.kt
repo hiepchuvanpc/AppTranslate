@@ -65,6 +65,7 @@ class HomeFragment : Fragment() {
                     Log.d(TAG, "Service started successfully")
                     isRunning = true
                     updateFabIcon()
+                    updateServiceLanguages()
                     Toast.makeText(requireContext(), "Nút nổi đã sẵn sàng!", Toast.LENGTH_SHORT).show()
                 }
                 OverlayService.BROADCAST_SERVICE_STOPPED -> {
@@ -248,7 +249,7 @@ class HomeFragment : Fragment() {
         // Quan sát ngôn ngữ nguồn
         viewModel.sourceLanguage.observe(viewLifecycleOwner) { language ->
             binding.languageCard.btnSourceLanguage.text = language.nativeName
-            
+
             // Gửi thông tin ngôn ngữ đến OverlayService
             updateServiceLanguages()
         }
@@ -256,7 +257,7 @@ class HomeFragment : Fragment() {
         // Quan sát ngôn ngữ đích
         viewModel.targetLanguage.observe(viewLifecycleOwner) { language ->
             binding.languageCard.btnTargetLanguage.text = language.nativeName
-            
+
             // Gửi thông tin ngôn ngữ đến OverlayService
             updateServiceLanguages()
         }
@@ -555,16 +556,16 @@ class HomeFragment : Fragment() {
      */
     private fun updateServiceLanguages() {
         if (!isRunning) return
-        
+
         val sourceCode = viewModel.sourceLanguage.value?.code ?: "vi"
         val targetCode = viewModel.targetLanguage.value?.code ?: "en"
-        
+
         val intent = Intent(requireContext(), OverlayService::class.java).apply {
             action = OverlayService.ACTION_UPDATE_LANGUAGES
             putExtra(OverlayService.EXTRA_SOURCE_LANG, sourceCode)
             putExtra(OverlayService.EXTRA_TARGET_LANG, targetCode)
         }
-        
+
         requireContext().startService(intent)
         Log.d(TAG, "Sent language update to service: $sourceCode → $targetCode")
     }
