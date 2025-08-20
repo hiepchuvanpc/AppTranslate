@@ -1,5 +1,3 @@
-// File: app/src/main/java/com/example/apptranslate/service/OverlayService.kt
-
 package com.example.apptranslate.service
 
 import android.annotation.SuppressLint
@@ -11,6 +9,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
@@ -24,8 +26,6 @@ import android.os.Looper
 import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -33,12 +33,12 @@ import com.example.apptranslate.R
 import com.example.apptranslate.data.SettingsManager
 import com.example.apptranslate.data.TranslationManager
 import com.example.apptranslate.ocr.OcrManager
+import com.example.apptranslate.ocr.OcrResult
 import com.example.apptranslate.ui.overlay.*
 import kotlinx.coroutines.*
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.suspendCancellableCoroutine
 
-// ✨ Implement BubbleViewListener để xử lý sự kiện từ bubble ✨
 class OverlayService : Service(), BubbleViewListener {
 
     companion object {
@@ -74,17 +74,20 @@ class OverlayService : Service(), BubbleViewListener {
 
     // --- Media Projection ---
     private var mediaProjection: MediaProjection? = null
-    private var imageReader: ImageReader? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    // ✨ Quản lý trạng thái tập trung tại Service ✨
-    private enum class ServiceState { IDLE, PANEL_OPEN, MAGNIFIER, MOVING_PANEL }
+    // --- KIẾN TRÚC QUÉT MỚI ---
+    private var magnifierJob: Job? = null
+    private var fullScreenOcrJob: Job? = null
+    @Volatile
+    private var screenTextMap: List<OcrResult.Block> = emptyList()
+    private var lastTranslatedBlock: OcrResult.Block? = null
+    private var imageReader: ImageReader? = null
+
+    // --- State Management ---
     private var currentState = ServiceState.IDLE
-    private var liveTranslationJob: Job? = null
-    private var lastOcrText: String? = null
 
     // --- Lifecycle Methods ---
-
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -110,7 +113,7 @@ class OverlayService : Service(), BubbleViewListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // --- Service Actions Handling ---
+    // --- Service Actions & State ---
 
     private fun handleStartService(intent: Intent) {
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
@@ -126,6 +129,7 @@ class OverlayService : Service(), BubbleViewListener {
             showFloatingBubble()
             isRunning = true
             sendBroadcast(Intent(BROADCAST_SERVICE_STARTED).setPackage(packageName))
+            startFullScreenOcrLoop() // Bắt đầu quét nền
         } else {
             Log.e(TAG, "Failed to get MediaProjection permission.")
             sendBroadcast(Intent(BROADCAST_SERVICE_ERROR).setPackage(packageName))
@@ -143,12 +147,13 @@ class OverlayService : Service(), BubbleViewListener {
     private fun stopService() {
         if (!isRunning) return
         isRunning = false
-
         try {
+            fullScreenOcrJob?.cancel()
+            magnifierJob?.cancel()
             floatingBubbleView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
             removeResultView()
             mediaProjection?.stop()
-            ocrManager.close() // ✨ Giải phóng tài nguyên OCR ✨
+            ocrManager.close()
             serviceScope.cancel()
         } catch (e: Exception) {
             Log.e(TAG, "Error during service stop", e)
@@ -161,12 +166,175 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
-    // --- UI Management ---
+    private fun setState(newState: ServiceState) {
+        if (currentState == newState) return
+        Log.d(TAG, "State changing from $currentState to $newState")
+
+        // Dọn dẹp trạng thái cũ
+        if (currentState == ServiceState.MAGNIFIER) {
+            stopMagnifierTracking()
+        }
+
+        currentState = newState
+
+        // Thiết lập trạng thái mới
+        when (newState) {
+            ServiceState.IDLE -> {
+                floatingBubbleView?.closePanel()
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
+            }
+            ServiceState.PANEL_OPEN -> {
+                floatingBubbleView?.openPanel()
+            }
+            ServiceState.MAGNIFIER -> {
+                floatingBubbleView?.closePanel()
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MAGNIFIER)
+                startMagnifierTracking()
+            }
+            ServiceState.MOVING_PANEL -> {
+                floatingBubbleView?.closePanel()
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MOVING)
+                // Ở trạng thái này, bubble có thể được kéo đi mà không kích hoạt kính lúp
+            }
+        }
+    }
+
+    // --- BubbleViewListener Implementation ---
+
+    override fun onBubbleTapped() {
+        if (currentState == ServiceState.PANEL_OPEN) {
+            setState(ServiceState.IDLE)
+        } else {
+            setState(ServiceState.PANEL_OPEN)
+        }
+    }
+
+    override fun onBubbleLongPressed() = setState(ServiceState.MAGNIFIER)
+
+    override fun onDragStarted() {
+        if (currentState == ServiceState.IDLE) {
+            setState(ServiceState.MAGNIFIER)
+        }
+    }
+
+    override fun onDragFinished() {
+        if (currentState == ServiceState.MAGNIFIER) {
+            setState(ServiceState.IDLE)
+        }
+    }
+
+    override fun onLanguageSelectClicked() {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            action = "ACTION_SHOW_LANGUAGE_SHEET"
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        startActivity(intent)
+        setState(ServiceState.IDLE)
+    }
+
+    override fun onHomeClicked() {
+        // Tạo Intent để mở lại MainActivity
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        }
+        startActivity(intent)
+        // Đóng panel lại
+        setState(ServiceState.IDLE)
+    }
+
+    // SỬA HÀM NÀY
+    override fun onMoveClicked() {
+        // Chuyển sang trạng thái di chuyển panel
+        setState(ServiceState.MOVING_PANEL)
+    }
+
+    override fun onFunctionClicked(functionId: String) {
+        setState(ServiceState.IDLE)
+        Toast.makeText(this, "Chức năng: $functionId", Toast.LENGTH_SHORT).show()
+        // TODO: Implement logic for each function here
+    }
+
+    // --- New OCR Architecture ---
+
+    private fun startFullScreenOcrLoop() {
+        if (fullScreenOcrJob?.isActive == true) return
+        fullScreenOcrJob = serviceScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val screenBitmap = captureScreen() ?: continue
+                    val processedBitmap = preprocessBitmapForOcr(screenBitmap)
+                    screenBitmap.recycle()
+
+                    val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
+                    val ocrResult = ocrManager.recognizeTextFromBitmap(processedBitmap, sourceLang)
+                    processedBitmap.recycle()
+
+                    screenTextMap = ocrResult.textBlocks
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in full screen OCR loop", e)
+                }
+                delay(1500) // Rescan every 1.5 seconds
+            }
+        }
+    }
+
+    private fun startMagnifierTracking() {
+        if (magnifierJob?.isActive == true) return
+        magnifierJob = serviceScope.launch {
+            while (isActive) {
+                floatingBubbleView?.let { bubble ->
+                    val location = IntArray(2)
+                    bubble.getLocationOnScreen(location)
+                    val bubbleCenterX = location[0] + bubble.width / 2
+                    val bubbleCenterY = location[1] + bubble.height / 2
+
+                    findAndTranslateTextAt(bubbleCenterX, bubbleCenterY)
+                }
+                delay(100) // Track pointer 10 times per second
+            }
+        }
+    }
+
+    private suspend fun findAndTranslateTextAt(bubbleX: Int, bubbleY: Int) {
+        val targetBlock = screenTextMap.find {
+            it.boundingBox?.contains(bubbleX, bubbleY) ?: false
+        }
+
+        if (targetBlock == null) {
+            return // Do nothing if not pointing at text, keeps the old result visible
+        }
+
+        if (targetBlock == lastTranslatedBlock) {
+            return // Don't re-translate the same block
+        }
+
+        lastTranslatedBlock = targetBlock
+        val textToTranslate = targetBlock.text.trim()
+
+        if (textToTranslate.isBlank()) return
+
+        showResultView(targetBlock.boundingBox!!)
+        val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
+        val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
+        val transSource = settingsManager.getTranslationSource()
+
+        val translationResult = translationManager.translate(textToTranslate, sourceLang, targetLang, transSource)
+        resultView?.updateText(translationResult.getOrDefault("Lỗi dịch"))
+    }
+
+    private fun stopMagnifierTracking() {
+        magnifierJob?.cancel()
+        magnifierJob = null
+        lastTranslatedBlock = null
+        removeResultView()
+    }
+
+    // --- UI & Utility Methods ---
 
     private fun showFloatingBubble() {
         val themedContext = ContextThemeWrapper(this, R.style.Theme_AppTranslate_NoActionBar)
         floatingBubbleView = FloatingBubbleView(themedContext, serviceScope).apply {
-            listener = this@OverlayService // ✨ Gán listener là Service này ✨
+            listener = this@OverlayService
         }
 
         val params = WindowManager.LayoutParams(
@@ -183,6 +351,7 @@ class OverlayService : Service(), BubbleViewListener {
         windowManager.addView(floatingBubbleView, params)
     }
 
+    @SuppressLint("InflateParams")
     private fun showResultView(positionRect: Rect) {
         if (resultView == null) {
             resultView = TranslationResultView(this)
@@ -196,21 +365,21 @@ class OverlayService : Service(), BubbleViewListener {
             }
             windowManager.addView(resultView, resultViewParams)
         }
+
+        val paddingInPx = (8 * resources.displayMetrics.density).toInt()
+
         resultViewParams?.apply {
             x = positionRect.left
-            y = positionRect.bottom // Hiển thị ngay dưới vùng văn bản
+            y = positionRect.top - paddingInPx
         }
+
         resultView?.showLoading()
         windowManager.updateViewLayout(resultView, resultViewParams)
     }
 
     private fun removeResultView() {
         try {
-            resultView?.let {
-                if (it.isAttachedToWindow) {
-                    windowManager.removeView(it)
-                }
-            }
+            resultView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error removing result view", e)
         } finally {
@@ -218,186 +387,27 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
-    // --- BubbleViewListener Implementation ---
-
-    override fun onBubbleTapped() {
-        if (currentState == ServiceState.PANEL_OPEN) {
-            setState(ServiceState.IDLE)
-        } else {
-            setState(ServiceState.PANEL_OPEN)
-        }
-    }
-
-    override fun onBubbleLongPressed() {
-        setState(ServiceState.MAGNIFIER)
-    }
-
-    override fun onDragStarted() {
-        if (currentState == ServiceState.IDLE) {
-            setState(ServiceState.MAGNIFIER)
-        }
-    }
-
-    override fun onDragFinished() {
-        if (currentState == ServiceState.MAGNIFIER) {
-            stopLiveTranslation()
-            setState(ServiceState.IDLE)
-        }
-    }
-
-    override fun onFunctionClicked(functionId: String) {
-        Toast.makeText(this, "Chức năng: $functionId", Toast.LENGTH_SHORT).show()
-        // TODO: Triển khai logic cho từng chức năng ở đây
-        setState(ServiceState.IDLE)
-    }
-
-    override fun onLanguageSelectClicked() {
-        sendBroadcast(Intent(ACTION_SHOW_LANGUAGE_SHEET).setPackage(packageName))
-        setState(ServiceState.IDLE)
-    }
-
-    override fun onHomeClicked() {
-        // Có thể mở lại MainActivity thay vì đóng service
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-        intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
-        setState(ServiceState.IDLE)
-    }
-
-    override fun onMoveClicked() {
-        setState(ServiceState.MOVING_PANEL)
-    }
-
-    // --- State Machine ---
-
-    private fun setState(newState: ServiceState) {
-        if (currentState == newState) return
-        Log.d(TAG, "State changing from $currentState to $newState")
-        currentState = newState
-
-        when (newState) {
-            ServiceState.IDLE -> {
-                floatingBubbleView?.closePanel()
-                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
-                stopLiveTranslation()
-            }
-            ServiceState.PANEL_OPEN -> {
-                floatingBubbleView?.openPanel()
-            }
-            ServiceState.MAGNIFIER -> {
-                floatingBubbleView?.closePanel() // Đảm bảo panel đã đóng
-                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MAGNIFIER)
-                startLiveTranslation()
-            }
-            ServiceState.MOVING_PANEL -> {
-                floatingBubbleView?.closePanel()
-                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MOVING)
-            }
-        }
-    }
-
-    // --- OCR & Translation Logic ---
-
-    private fun startLiveTranslation() {
-        if (liveTranslationJob?.isActive == true) return
-        lastOcrText = null
-        liveTranslationJob = serviceScope.launch {
-            while (isActive) {
-                val bubbleRect = floatingBubbleView?.let {
-                    val location = IntArray(2)
-                    it.getLocationOnScreen(location)
-                    // Tạo một vùng nhỏ hơn xung quanh bubble để quét
-                    val scanSize = 200 // Kích thước vùng quét
-                    Rect(location[0] - scanSize/2, location[1] - scanSize/2, location[0] + it.width + scanSize/2, location[1] + it.height + scanSize/2)
-                }
-                if (bubbleRect != null) {
-                    processScreen(bubbleRect)
-                }
-                delay(500) // Tăng delay để tiết kiệm pin
-            }
-        }
-    }
-
-    private fun stopLiveTranslation() {
-        liveTranslationJob?.cancel()
-        liveTranslationJob = null
-        removeResultView()
-    }
-
-    private suspend fun processScreen(scanRect: Rect) {
-        val screenBitmap = captureScreen() ?: return
-        // Cắt ảnh theo vùng quét để xử lý nhanh hơn
-        val croppedBitmap = cropBitmap(screenBitmap, scanRect)
-        screenBitmap.recycle()
-
-        if (croppedBitmap.width <= 1 || croppedBitmap.height <= 1) {
-            croppedBitmap.recycle()
-            return
-        }
-
-        val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
-        try {
-            val ocrResult = ocrManager.recognizeTextFromBitmap(croppedBitmap, sourceLang)
-            croppedBitmap.recycle()
-
-            val detectedText = ocrResult.fullText.trim()
-            if (detectedText.isNotBlank() && detectedText != lastOcrText) {
-                lastOcrText = detectedText
-
-                // Lấy bounding box của khối text đầu tiên để định vị
-                val firstBlock = ocrResult.textBlocks.firstOrNull() ?: return
-                val textBoundingBox = firstBlock.boundingBox ?: return
-
-                // Chuyển tọa độ của text box về tọa độ toàn màn hình
-                val globalTextRect = Rect(
-                    scanRect.left + textBoundingBox.left,
-                    scanRect.top + textBoundingBox.top,
-                    scanRect.left + textBoundingBox.right,
-                    scanRect.top + textBoundingBox.bottom
-                )
-
-                showResultView(globalTextRect)
-                val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
-                val transSource = settingsManager.getTranslationSource()
-                val translationResult = translationManager.translate(detectedText, sourceLang, targetLang, transSource)
-                resultView?.updateText(translationResult.getOrDefault("Lỗi dịch"))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "OCR or Translation failed", e)
-            croppedBitmap.recycle()
-        }
-    }
-
-    private fun cropBitmap(source: Bitmap, rect: Rect): Bitmap {
-        // Đảm bảo vùng cắt không ra ngoài bitmap
-        val safeRect = Rect(
-            maxOf(0, rect.left),
-            maxOf(0, rect.top),
-            minOf(source.width, rect.right),
-            minOf(source.height, rect.bottom)
-        )
-        if (safeRect.width() <= 0 || safeRect.height() <= 0) {
-            return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-        }
-        return Bitmap.createBitmap(source, safeRect.left, safeRect.top, safeRect.width(), safeRect.height())
-    }
-
-
-    // --- Media Projection & Helpers ---
-
-    private fun initializeMediaProjection(resultCode: Int, data: Intent) {
-        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
-        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                Log.e(TAG, "MediaProjection was stopped externally. Stopping service.")
-                stopService()
-            }
-        }, handler)
+    private fun preprocessBitmapForOcr(bitmap: Bitmap): Bitmap {
+        val grayscaleBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(grayscaleBitmap)
+        val paint = Paint()
+        val colorMatrix = ColorMatrix().apply { setSaturation(0f) }
+        val scale = 2f
+        val translate = -(scale - 1f) * 128f
+        val contrastMatrix = ColorMatrix(floatArrayOf(
+            scale, 0f, 0f, 0f, translate,
+            0f, scale, 0f, 0f, translate,
+            0f, 0f, scale, 0f, translate,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        colorMatrix.postConcat(contrastMatrix)
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+        canvas.drawBitmap(bitmap, 0f, 0f, paint)
+        return grayscaleBitmap
     }
 
     private suspend fun captureScreen(): Bitmap? = suspendCancellableCoroutine { continuation ->
-        if (mediaProjection == null || imageReader != null) {
+        if (mediaProjection == null || imageReader?.surface != null) {
             if (continuation.isActive) continuation.resume(null)
             return@suspendCancellableCoroutine
         }
@@ -412,11 +422,11 @@ class OverlayService : Service(), BubbleViewListener {
             "ScreenCapture",
             width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface, null, null
+            imageReader?.surface, null, handler
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
+            val image = try { reader.acquireLatestImage() } catch (e: Exception) { null }
             if (image != null) {
                 val planes = image.planes
                 val buffer = planes[0].buffer
@@ -428,13 +438,11 @@ class OverlayService : Service(), BubbleViewListener {
                 bitmap.copyPixelsFromBuffer(buffer)
                 image.close()
 
-                // Dọn dẹp ngay lập tức
                 virtualDisplay?.release()
                 reader.close()
                 imageReader = null
 
                 if (continuation.isActive) {
-                    // Cắt bỏ phần padding nếu có
                     val finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
                     bitmap.recycle()
                     continuation.resume(finalBitmap)
@@ -442,7 +450,7 @@ class OverlayService : Service(), BubbleViewListener {
                     bitmap.recycle()
                 }
             } else {
-                 if (continuation.isActive) continuation.resume(null)
+                if (continuation.isActive) continuation.resume(null)
             }
         }, handler)
 
@@ -453,6 +461,16 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
+    private fun initializeMediaProjection(resultCode: Int, data: Intent) {
+        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
+        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.e(TAG, "MediaProjection was stopped externally. Stopping service.")
+                stopService()
+            }
+        }, handler)
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

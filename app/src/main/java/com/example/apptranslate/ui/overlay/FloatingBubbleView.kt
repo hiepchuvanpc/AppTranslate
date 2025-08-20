@@ -40,6 +40,7 @@ interface BubbleViewListener {
     fun onLanguageSelectClicked()
     fun onHomeClicked()
     fun onMoveClicked()
+
 }
 
 /**
@@ -49,6 +50,13 @@ enum class BubbleAppearance {
     NORMAL,
     MAGNIFIER,
     MOVING
+}
+
+enum class ServiceState {
+    IDLE,
+    PANEL_OPEN,
+    MAGNIFIER,
+    MOVING_PANEL
 }
 
 @SuppressLint("ViewConstructor")
@@ -206,8 +214,8 @@ class FloatingBubbleView(
                     val deltaX = event.rawX - initialTouchX
                     val deltaY = event.rawY - initialTouchY
                     if (!isDragging && (abs(deltaX) > ViewConfiguration.get(context).scaledTouchSlop || abs(deltaY) > ViewConfiguration.get(context).scaledTouchSlop)) {
-                        // Bắt đầu kéo khi di chuyển đủ xa
                         isDragging = true
+                        // SỬA Ở ĐÂY: Chỉ gọi onDragStarted khi không ở chế độ MOVE
                         listener?.onDragStarted()
                     }
 
@@ -231,15 +239,19 @@ class FloatingBubbleView(
         val recyclerView = controlPanelBinding.recyclerViewFunctions
         val spanCount = if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) 2 else 3
         recyclerView.layoutManager = GridLayoutManager(context, spanCount)
-        val functionAdapter = FunctionAdapter { item -> listener?.onFunctionClicked(item.id) }
+
+        val functionAdapter = FunctionAdapter { item ->
+            // Gửi sự kiện click chức năng ra cho Service xử lý
+            listener?.onFunctionClicked(item.id)
+        }
         recyclerView.adapter = functionAdapter
         functionAdapter.submitList(createFunctionItems())
 
+        // SỬA Ở ĐÂY: Kết nối các nút bấm với listener để Service có thể nhận được
         controlPanelBinding.buttonHome.setOnClickListener { listener?.onHomeClicked() }
         controlPanelBinding.buttonMove.setOnClickListener { listener?.onMoveClicked() }
         controlPanelBinding.buttonLanguageSelection.setOnClickListener { listener?.onLanguageSelectClicked() }
     }
-
     // --- Internal Logic & Animations ---
 
     private fun endDrag() {
@@ -362,10 +374,24 @@ class FloatingBubbleView(
     }
 
     private fun updateScreenDimensions() {
-        val windowMetrics = windowManager.currentWindowMetrics
-        val bounds = windowMetrics.bounds
-        screenWidth = bounds.width()
-        screenHeight = bounds.height()
+        // SỬA Ở ĐÂY: Thêm kiểm tra phiên bản Android
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Dành cho Android 11 (API 30) trở lên
+            val windowMetrics = windowManager.currentWindowMetrics
+            val bounds = windowMetrics.bounds
+            screenWidth = bounds.width()
+            screenHeight = bounds.height()
+        } else {
+            // Dành cho Android 10 (API 29) và cũ hơn
+            @Suppress("DEPRECATION")
+            val display = windowManager.defaultDisplay
+            @Suppress("DEPRECATION")
+            val size = Point()
+            @Suppress("DEPRECATION")
+            display.getSize(size)
+            screenWidth = size.x
+            screenHeight = size.y
+        }
     }
 
     private fun adjustPanelPosition() {

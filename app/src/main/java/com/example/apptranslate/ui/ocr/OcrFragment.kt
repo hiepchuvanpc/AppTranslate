@@ -2,6 +2,7 @@ package com.example.apptranslate.ui.ocr
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -13,38 +14,35 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.ViewModelProvider
+import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.lifecycleScope
+import com.example.apptranslate.R
 import com.example.apptranslate.databinding.FragmentOcrBinding
 import com.example.apptranslate.ocr.OcrHelper
 import com.example.apptranslate.ocr.OcrResult
 import com.example.apptranslate.viewmodel.LanguageViewModel
+import com.example.apptranslate.viewmodel.LanguageViewModelFactory
 
-/**
- * Fragment demo cho chức năng OCR
- */
 class OcrFragment : Fragment() {
-    
+
     private var _binding: FragmentOcrBinding? = null
     private val binding get() = _binding!!
-    
+
     private lateinit var ocrHelper: OcrHelper
-    private lateinit var languageViewModel: LanguageViewModel
-    
-    // ActivityResultLauncher để chọn ảnh từ gallery
+    private val languageViewModel: LanguageViewModel by activityViewModels {
+        LanguageViewModelFactory(requireActivity().application)
+    }
+
     private val pickImageLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                processImageUri(uri)
-            }
+            result.data?.data?.let { uri -> processImageUri(uri) }
         }
     }
-    
-    // ActivityResultLauncher để chụp ảnh từ camera
+
     private val takePictureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -53,218 +51,127 @@ class OcrFragment : Fragment() {
             bitmap?.let { processImageBitmap(it) }
         }
     }
-    
-    // Permission launcher
+
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        if (isGranted) {
-            openCamera()
-        } else {
-            Toast.makeText(context, "Cần quyền camera để chụp ảnh", Toast.LENGTH_SHORT).show()
-        }
+        if (isGranted) openCamera()
+        else Toast.makeText(context, "Cần quyền camera để chụp ảnh", Toast.LENGTH_SHORT).show()
     }
-    
+
     override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View {
         _binding = FragmentOcrBinding.inflate(inflater, container, false)
         return binding.root
     }
-    
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        
-        setupOcrHelper()
-        setupLanguageViewModel()
+
+        // SỬA Ở ĐÂY: Khởi tạo OcrHelper với lifecycleScope
+        ocrHelper = OcrHelper(requireContext(), viewLifecycleOwner.lifecycleScope)
+
         setupClickListeners()
         setupObservers()
     }
-    
-    private fun setupOcrHelper() {
-        ocrHelper = OcrHelper.getInstance(requireContext())
-    }
-    
-    private fun setupLanguageViewModel() {
-        languageViewModel = ViewModelProvider(requireActivity())[LanguageViewModel::class.java]
-    }
-    
+
     private fun setupClickListeners() {
-        binding.apply {
-            // Nút chọn ảnh từ gallery
-            buttonSelectImage.setOnClickListener {
-                openGallery()
-            }
-            
-            // Nút chụp ảnh từ camera
-            buttonTakePhoto.setOnClickListener {
-                checkCameraPermissionAndOpen()
-            }
-            
-            // Nút xóa kết quả
-            buttonClearResult.setOnClickListener {
-                clearResults()
-            }
-            
-            // Nút copy kết quả
-            buttonCopyResult.setOnClickListener {
-                copyResultToClipboard()
-            }
-        }
+        binding.buttonSelectImage.setOnClickListener { openGallery() }
+        binding.buttonTakePhoto.setOnClickListener { checkCameraPermissionAndOpen() }
+        binding.buttonClearResult.setOnClickListener { clearResults() }
+        binding.buttonCopyResult.setOnClickListener { copyResultToClipboard() }
     }
-    
+
     private fun setupObservers() {
-        // Observer cho OCR result, error, và processing state
-        ocrHelper.setupObservers(
-            viewLifecycleOwner,
-            onResult = { result -> displayOcrResult(result) },
-            onError = { error -> showError(error) },
-            onProcessingChange = { isProcessing -> updateProcessingState(isProcessing) }
-        )
-        
-        // Observer cho ngôn ngữ hiện tại
+        // SỬA Ở ĐÂY: Lắng nghe LiveData trực tiếp từ ocrHelper
+        ocrHelper.ocrResult.observe(viewLifecycleOwner) { result -> displayOcrResult(result) }
+        ocrHelper.error.observe(viewLifecycleOwner) { error -> showError(error) }
+        ocrHelper.isProcessing.observe(viewLifecycleOwner) { isProcessing -> updateProcessingState(isProcessing) }
+
         languageViewModel.sourceLanguage.observe(viewLifecycleOwner) { language ->
-            binding.textCurrentLanguage.text = "Ngôn ngữ hiện tại: ${language.name}"
+            binding.textCurrentLanguage.text = "Ngôn ngữ OCR: ${language.name}"
         }
     }
-    
+
     private fun openGallery() {
         val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
         pickImageLauncher.launch(intent)
     }
-    
+
     private fun checkCameraPermissionAndOpen() {
-        when {
-            ContextCompat.checkSelfPermission(
-                requireContext(),
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED -> {
-                openCamera()
-            }
-            ActivityCompat.shouldShowRequestPermissionRationale(
-                requireActivity(),
-                Manifest.permission.CAMERA
-            ) -> {
-                Toast.makeText(
-                    context,
-                    "Ứng dụng cần quyền camera để chụp ảnh",
-                    Toast.LENGTH_LONG
-                ).show()
-                requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
-            else -> {
-                requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            openCamera()
+        } else {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
-    
+
     private fun openCamera() {
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         takePictureLauncher.launch(intent)
     }
-    
+
     private fun processImageUri(uri: Uri) {
-        val currentLanguage = languageViewModel.sourceLanguage.value
-        if (currentLanguage != null) {
-            ocrHelper.recognizeTextFromUri(uri, currentLanguage.code)
+        languageViewModel.sourceLanguage.value?.code?.let {
+            ocrHelper.recognizeTextFromUri(uri, it)
             binding.imageViewSelected.setImageURI(uri)
-        } else {
-            showError("Vui lòng chọn ngôn ngữ trước")
-        }
+        } ?: showError("Vui lòng chọn ngôn ngữ trước.")
     }
-    
+
     private fun processImageBitmap(bitmap: Bitmap) {
-        val currentLanguage = languageViewModel.sourceLanguage.value
-        if (currentLanguage != null) {
-            ocrHelper.recognizeTextFromBitmap(bitmap, currentLanguage.code)
+        languageViewModel.sourceLanguage.value?.code?.let {
+            ocrHelper.recognizeTextFromBitmap(bitmap, it)
             binding.imageViewSelected.setImageBitmap(bitmap)
-        } else {
-            showError("Vui lòng chọn ngôn ngữ trước")
-        }
+        } ?: showError("Vui lòng chọn ngôn ngữ trước.")
     }
-    
+
     private fun displayOcrResult(result: OcrResult) {
-        binding.apply {
-            // Hiển thị văn bản nhận dạng được
-            textOcrResult.text = result.fullText
-            
-            // Hiển thị thống kê
-            val stats = ocrHelper.getOcrStatistics(result)
-            val statsText = buildString {
-                append("📊 Thống kê OCR:\n")
-                append("• Thời gian xử lý: ${stats["processingTimeMs"]}ms\n")
-                append("• Số khối văn bản: ${stats["totalBlocks"]}\n")
-                append("• Số dòng: ${stats["totalLines"]}\n")
-                append("• Số ký tự: ${stats["totalCharacters"]}\n")
-                append("• Hệ chữ: ${stats["scriptType"]}\n")
-                append("• Độ tin cậy TB: ${String.format("%.2f", stats["averageConfidence"])}")
-            }
-            textOcrStats.text = statsText
-            
-            // Hiển thị các nút hành động
-            buttonCopyResult.visibility = View.VISIBLE
-            buttonClearResult.visibility = View.VISIBLE
-            
-            // Scroll xuống để xem kết quả
-            scrollView.post {
-                scrollView.fullScroll(View.FOCUS_DOWN)
-            }
-        }
+        // SỬA Ở ĐÂY: Cập nhật cách hiển thị kết quả
+        binding.textOcrResult.text = result.fullText
+        binding.textOcrStats.text = "Xử lý trong: ${result.processingTimeMs}ms\n" +
+                                   "Số khối văn bản: ${result.textBlocks.size}"
+        binding.buttonCopyResult.visibility = View.VISIBLE
+        binding.buttonClearResult.visibility = View.VISIBLE
+        binding.scrollView.post { binding.scrollView.fullScroll(View.FOCUS_DOWN) }
     }
-    
+
     private fun showError(error: String) {
         binding.textOcrResult.text = "❌ Lỗi: $error"
         binding.textOcrStats.text = ""
         Toast.makeText(context, error, Toast.LENGTH_LONG).show()
     }
-    
+
     private fun updateProcessingState(isProcessing: Boolean) {
-        binding.apply {
-            progressBarOcr.visibility = if (isProcessing) View.VISIBLE else View.GONE
-            buttonSelectImage.isEnabled = !isProcessing
-            buttonTakePhoto.isEnabled = !isProcessing
-            
-            if (isProcessing) {
-                textOcrResult.text = "🔍 Đang nhận dạng văn bản..."
-                textOcrStats.text = ""
-            }
+        binding.progressBarOcr.visibility = if (isProcessing) View.VISIBLE else View.GONE
+        binding.buttonSelectImage.isEnabled = !isProcessing
+        binding.buttonTakePhoto.isEnabled = !isProcessing
+        if (isProcessing) {
+            binding.textOcrResult.text = "🔍 Đang nhận dạng văn bản..."
+            binding.textOcrStats.text = ""
         }
     }
-    
+
     private fun clearResults() {
-        binding.apply {
-            textOcrResult.text = ""
-            textOcrStats.text = ""
-            imageViewSelected.setImageDrawable(null)
-            buttonCopyResult.visibility = View.GONE
-            buttonClearResult.visibility = View.GONE
-        }
+        binding.textOcrResult.text = ""
+        binding.textOcrStats.text = ""
+        binding.imageViewSelected.setImageResource(R.drawable.ic_image_placeholder)
+        binding.buttonCopyResult.visibility = View.GONE
+        binding.buttonClearResult.visibility = View.GONE
     }
-    
+
     private fun copyResultToClipboard() {
         val text = binding.textOcrResult.text.toString()
-        if (text.isNotEmpty()) {
-            val clipboard = ContextCompat.getSystemService(
-                requireContext(),
-                android.content.ClipboardManager::class.java
-            )
+        if (text.isNotBlank()) {
+            val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
             val clip = android.content.ClipData.newPlainText("OCR Result", text)
-            clipboard?.setPrimaryClip(clip)
-            Toast.makeText(context, "Đã copy kết quả", Toast.LENGTH_SHORT).show()
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(context, "Đã sao chép kết quả", Toast.LENGTH_SHORT).show()
         }
     }
-    
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
-    }
-    
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::ocrHelper.isInitialized) {
-            ocrHelper.cleanup()
-        }
     }
 }

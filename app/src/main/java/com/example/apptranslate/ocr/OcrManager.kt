@@ -17,6 +17,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
+
 // ✨ Implement Closeable để dễ dàng quản lý tài nguyên ✨
 class OcrManager private constructor() : Closeable {
 
@@ -52,17 +53,20 @@ class OcrManager private constructor() : Closeable {
         }
     }
 
+    // BÊN TRONG CLASS OcrManager
+
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap, languageCode: String): OcrResult {
         val startTime = System.currentTimeMillis()
         val inputImage = InputImage.fromBitmap(bitmap, 0)
+
         val recognizer = getRecognizerForLanguage(languageCode)
 
         return suspendCoroutine { continuation ->
             recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
                     val processingTimeMs = System.currentTimeMillis() - startTime
-                    // Giả định OcrHelper.parseTextResult là một hàm static hoặc trong object
-                    val result = OcrHelper.parseTextResult(visionText, processingTimeMs)
+                    // SỬA Ở ĐÂY: Dùng OcrResultParser.parse thay vì OcrHelper
+                    val result = OcrResultParser.parse(visionText, processingTimeMs)
                     continuation.resume(result)
                 }
                 .addOnFailureListener { e ->
