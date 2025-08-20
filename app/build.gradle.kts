@@ -45,9 +45,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    // ✨ THÊM THƯ VIỆN GEMINI AI ✨
-    implementation("com.google.ai.client.generativeai:generativeai:0.3.0")
-
     // Compose (keep for future use)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -67,16 +64,26 @@ dependencies {
     implementation("androidx.navigation:navigation-fragment-ktx:2.7.7")
     implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
 
-    // Google ML Kit Text Recognition
-    val mlkitVersion = "16.0.1"
-    implementation(platform("com.google.mlkit:common:$mlkitVersion"))
+    // To recognize Latin script
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
-    // 2. Khai báo các thư viện nhận dạng chữ bạn cần mà không cần ghi phiên bản
-    implementation("com.google.mlkit:text-recognition") // Latin là mặc định
-    implementation("com.google.mlkit:text-recognition-chinese")
-    implementation("com.google.mlkit:text-recognition-devanagari")
-    implementation("com.google.mlkit:text-recognition-japanese")
-    implementation("com.google.mlkit:text-recognition-korean")
+    // To recognize Chinese script
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+
+    // To recognize Devanagari script
+    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
+
+    // To recognize Japanese script
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+
+    // To recognize Korean script
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+
+    // Thư viện cho Dịch Offline
+    implementation ("com.google.mlkit:translate:17.0.3")
+
+    // Gemini AI
+    implementation("com.google.ai.client.generativeai:generativeai:0.5.0") // Cập nhật phiên bản mới nhất
 
     // Camera and Image Processing
     implementation("androidx.camera:camera-core:1.3.4")

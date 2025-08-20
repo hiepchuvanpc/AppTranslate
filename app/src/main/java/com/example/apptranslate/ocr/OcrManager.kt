@@ -3,6 +3,7 @@
 package com.example.apptranslate.ocr
 
 import android.graphics.Bitmap
+import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
@@ -10,63 +11,57 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
-import com.google.mlkit.vision.text.latin.LatinTextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.io.Closeable
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
-/**
- * Quản lý việc nhận dạng văn bản (OCR) bằng Google ML Kit.
- * Đây là công cụ chỉ để lấy text từ ảnh.
- */
-class OcrManager private constructor() {
+// ✨ Implement Closeable để dễ dàng quản lý tài nguyên ✨
+class OcrManager private constructor() : Closeable {
 
-    // Tạo sẵn các bộ nhận dạng cho từng bộ chữ viết
-    private val latinRecognizer: TextRecognizer by lazy {
-        TextRecognition.getClient(LatinTextRecognizerOptions.Builder().build())
-    }
-    private val japaneseRecognizer: TextRecognizer by lazy {
-        TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-    }
-    private val chineseRecognizer: TextRecognizer by lazy {
-        TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-    }
-    private val koreanRecognizer: TextRecognizer by lazy {
-        TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-    }
-    private val devanagariRecognizer: TextRecognizer by lazy {
-        TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
-    }
+    // ✨ Sử dụng Map để cache recognizer, thay vì tạo tất cả cùng lúc ✨
+    private val recognizerCache = mutableMapOf<String, TextRecognizer>()
 
     /**
-     * Chọn bộ nhận dạng (recognizer) phù hợp dựa trên mã ngôn ngữ (ISO 639-1 code).
+     * Lấy hoặc tạo một recognizer cho mã ngôn ngữ cụ thể.
      */
     private fun getRecognizerForLanguage(languageCode: String): TextRecognizer {
-        return when (languageCode) {
-            "ja" -> japaneseRecognizer
-            "zh", "zh-CN", "zh-TW" -> chineseRecognizer
-            "ko" -> koreanRecognizer
-            "hi", "mr", "ne", "sa" -> devanagariRecognizer // Tiếng Hindi, Marathi, Nepali, Sanskrit
-            else -> latinRecognizer // Mặc định cho Tiếng Việt, Anh và các ngôn ngữ Latin khác
+        val script = mapLanguageToScript(languageCode)
+        // Chỉ tạo mới nếu chưa có trong cache
+        return recognizerCache.getOrPut(script) {
+            Log.d("OcrManager", "Creating new TextRecognizer for script: $script")
+            when (script) {
+                "Japanese" -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
+                "Chinese" -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+                "Korean" -> TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
+                "Devanagari" -> TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
+                else -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) // Latin và mặc định
+            }
         }
     }
 
-    /**
-     * Nhận dạng văn bản từ một Bitmap.
-     * @param bitmap ảnh đầu vào.
-     * @param languageCode mã ngôn ngữ của văn bản trong ảnh để chọn bộ nhận dạng phù hợp.
-     * @return OcrResult chứa kết quả nhận dạng.
-     */
+    // ✨ Tách logic map ngôn ngữ ra một hàm riêng để dễ quản lý ✨
+    private fun mapLanguageToScript(languageCode: String): String {
+        return when (languageCode) {
+            "ja" -> "Japanese"
+            "zh", "zh-CN", "zh-TW" -> "Chinese"
+            "ko" -> "Korean"
+            "hi", "mr", "ne", "sa" -> "Devanagari"
+            else -> "Latin"
+        }
+    }
+
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap, languageCode: String): OcrResult {
         val startTime = System.currentTimeMillis()
         val inputImage = InputImage.fromBitmap(bitmap, 0)
-
         val recognizer = getRecognizerForLanguage(languageCode)
 
         return suspendCoroutine { continuation ->
             recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
                     val processingTimeMs = System.currentTimeMillis() - startTime
+                    // Giả định OcrHelper.parseTextResult là một hàm static hoặc trong object
                     val result = OcrHelper.parseTextResult(visionText, processingTimeMs)
                     continuation.resume(result)
                 }
@@ -74,6 +69,16 @@ class OcrManager private constructor() {
                     continuation.resumeWithException(e)
                 }
         }
+    }
+
+    /**
+     * ✨ Giải phóng tất cả recognizer đã được cache.
+     * Nên gọi khi service bị hủy hoặc ứng dụng thoát.
+     */
+    override fun close() {
+        Log.d("OcrManager", "Closing all cached TextRecognizers.")
+        recognizerCache.values.forEach { it.close() }
+        recognizerCache.clear()
     }
 
     companion object {
