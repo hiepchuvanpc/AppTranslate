@@ -49,7 +49,9 @@ class HomeFragment : Fragment() {
     private var isRunning = false
 
     // Shared ViewModel với các Fragment khác
-    private val viewModel: LanguageViewModel by activityViewModels { LanguageViewModelFactory() }
+    private val viewModel: LanguageViewModel by activityViewModels {
+        LanguageViewModelFactory(requireActivity().application)
+    }
 
     // Adapter cho function grid
     private lateinit var functionAdapter: FunctionGridAdapter
@@ -239,13 +241,6 @@ class HomeFragment : Fragment() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        // ✨ THÊM HÀM MỚI NÀY ✨
-        private fun setupAiSettingsButton() {
-            binding.languageCard.btnAiSettings.setOnClickListener {
-                findNavController().navigate(R.id.action_homeFragment_to_aiSettingsFragment)
-            }
-        }
-
         // Thiết lập toggle chọn chế độ dịch
         binding.languageCard.toggleTranslationMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (isChecked) {
@@ -254,6 +249,13 @@ class HomeFragment : Fragment() {
                     R.id.btn_mode_advanced -> viewModel.setTranslationMode(TranslationMode.ADVANCED)
                 }
             }
+        }
+    }
+
+    // ✨ THÊM HÀM MỚI NÀY ✨
+    private fun setupAiSettingsButton() {
+        binding.languageCard.btnAiSettings.setOnClickListener {
+            findNavController().navigate(R.id.action_homeFragment_to_aiSettingsFragment)
         }
     }
 

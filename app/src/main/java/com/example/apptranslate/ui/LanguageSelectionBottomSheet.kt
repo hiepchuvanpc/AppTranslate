@@ -19,7 +19,7 @@ import com.example.apptranslate.viewmodel.LanguageViewModel
 import com.example.apptranslate.viewmodel.LanguageViewModelFactory
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.button.MaterialButton
-
+import com.example.apptranslate.adapter.LanguageListItem
 /**
  * Bottom Sheet Dialog cho việc chọn ngôn ngữ, tự động đóng sau khi chọn.
  */
@@ -35,7 +35,9 @@ class LanguageSelectionBottomSheet : BottomSheetDialogFragment() {
     private var _binding: ViewLanguageBottomSheetBinding? = null
     private val binding get() = _binding!!
 
-    private val viewModel: LanguageViewModel by activityViewModels { LanguageViewModelFactory() }
+    private val viewModel: LanguageViewModel by activityViewModels {
+        LanguageViewModelFactory(requireActivity().application)
+    }
     private lateinit var adapter: LanguageAdapter
     private var isSelectingSource = true
 
@@ -138,7 +140,9 @@ class LanguageSelectionBottomSheet : BottomSheetDialogFragment() {
             viewModel.recentTargetLanguages.value ?: emptyList()
         }
         val allLanguages = viewModel.getAllLanguages()
-        val items = LanguageAdapter.createFullList(recentLanguages, allLanguages, groupByRegion = true)
+
+        // ✨ SỬ DỤNG HÀM HELPER MỚI CỦA ADAPTER ✨
+        val items = LanguageAdapter.createFullList(recentLanguages, allLanguages, requireContext())
 
         adapter.submitList(items)
         binding.tvNoResults.visibility = View.GONE
@@ -150,10 +154,10 @@ class LanguageSelectionBottomSheet : BottomSheetDialogFragment() {
             loadLanguages()
             return
         }
-
         val searchResults = viewModel.searchLanguages(query)
         if (searchResults.isNotEmpty()) {
-            val items = LanguageAdapter.createSearchResultsList(searchResults)
+            // ✨ Khi tìm kiếm, chỉ hiển thị kết quả (không có header) ✨
+            val items = searchResults.map { LanguageListItem.LanguageItem(it) }
             adapter.submitList(items)
             binding.tvNoResults.visibility = View.GONE
             binding.recyclerViewLanguages.visibility = View.VISIBLE

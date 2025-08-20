@@ -45,6 +45,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
+    // ✨ THÊM THƯ VIỆN GEMINI AI ✨
+    implementation("com.google.ai.client.generativeai:generativeai:0.3.0")
+
     // Compose (keep for future use)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -65,11 +68,15 @@ dependencies {
     implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
 
     // Google ML Kit Text Recognition
-    implementation("com.google.mlkit:text-recognition:16.0.1")
-    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
-    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
-    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
-    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+    val mlkitVersion = "16.0.1"
+    implementation(platform("com.google.mlkit:common:$mlkitVersion"))
+
+    // 2. Khai báo các thư viện nhận dạng chữ bạn cần mà không cần ghi phiên bản
+    implementation("com.google.mlkit:text-recognition") // Latin là mặc định
+    implementation("com.google.mlkit:text-recognition-chinese")
+    implementation("com.google.mlkit:text-recognition-devanagari")
+    implementation("com.google.mlkit:text-recognition-japanese")
+    implementation("com.google.mlkit:text-recognition-korean")
 
     // Camera and Image Processing
     implementation("androidx.camera:camera-core:1.3.4")

@@ -24,8 +24,8 @@
 
             <ImageButton
                 android:id="@+id/buttonHome"
-                android:layout_width="@dimen/panel_icon_touch_target_size"
-                android:layout_height="@dimen/panel_icon_touch_target_size"
+                android:layout_width="@dimen/panel_function_button_size"
+                android:layout_height="@dimen/panel_function_button_size"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Về trang chủ"
                 android:src="@drawable/ic_home"
@@ -37,8 +37,8 @@
 
             <ImageButton
                 android:id="@+id/buttonMove"
-                android:layout_width="@dimen/panel_icon_touch_target_size"
-                android:layout_height="@dimen/panel_icon_touch_target_size"
+                android:layout_width="@dimen/panel_function_button_size"
+                android:layout_height="@dimen/panel_function_button_size"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Di chuyển panel"
                 android:src="@drawable/ic_drag_indicator"
@@ -67,12 +67,8 @@
             style="@style/Widget.Material3.Button.TonalButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="EN → VI"
-            android:textSize="8sp"
-            app:cornerRadius="16dp"
-            app:icon="@drawable/ic_language"
-            app:iconGravity="start" />
-
-    </LinearLayout>
+            android:text="-- → --" android:textColor="@color/dark_blue_text" android:textSize="12sp" app:backgroundTint="@color/light_blue_button" app:cornerRadius="16dp"
+            app:iconGravity="start"
+            app:iconTint="@color/dark_blue_text" /> </LinearLayout>
 
 </com.google.android.material.card.MaterialCardView>

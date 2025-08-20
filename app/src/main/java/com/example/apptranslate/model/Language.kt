@@ -1,93 +1,122 @@
+// File: app/src/main/java/com/example/apptranslate/model/Language.kt
+
 package com.example.apptranslate.model
 
-/**
- * Data class đại diện cho một ngôn ngữ trong ứng dụng
- * @param code Mã ngôn ngữ theo chuẩn ISO (ví dụ: "en", "vi")
- * @param name Tên Việt hóa của ngôn ngữ (ví dụ: "Tiếng Anh", "Tiếng Việt")
- * @param nativeName Tên gốc của ngôn ngữ (ví dụ: "English", "Tiếng Việt")
- * @param flag Emoji cờ quốc gia (ví dụ: "🇺🇸", "🇻🇳")
- */
+import java.util.Locale
+
+// ✨ Bỏ `flagEmoji` ✨
 data class Language(
     val code: String,
     val name: String,
     val nativeName: String,
-    val flag: String = "🌐" // Default flag
 ) {
-    /**
-     * Hiển thị tên gốc kèm mã ngôn ngữ
-     * Ví dụ: "English (en)"
-     */
-    val nativeNameWithCode: String
-        get() = "$nativeName ($code)"
-        
     companion object {
-        // Danh sách ngôn ngữ đầy đủ
-        val SAMPLE_LANGUAGES = listOf(
-            // Châu Á
-            Language("vi", "Tiếng Việt", "Tiếng Việt", "🇻🇳"),
-            Language("zh", "Tiếng Trung (Giản thể)", "简体中文", "🇨🇳"),
-            Language("zh-TW", "Tiếng Trung (Phồn thể)", "繁體中文", "🇹🇼"),
-            Language("ja", "Tiếng Nhật", "日本語", "🇯🇵"),
-            Language("ko", "Tiếng Hàn", "한국어", "🇰🇷"),
-            Language("th", "Tiếng Thái", "ไทย", "🇹🇭"),
-            Language("id", "Tiếng Indonesia", "Bahasa Indonesia", "🇮🇩"),
-            Language("ms", "Tiếng Malaysia", "Bahasa Melayu", "🇲🇾"),
-            Language("hi", "Tiếng Hindi", "हिन्दी", "🇮🇳"),
-            Language("ta", "Tiếng Tamil", "தமிழ்", "🇮🇳"),
-            Language("bn", "Tiếng Bengali", "বাংলা", "🇧🇩"),
-            
-            // Châu Âu
-            Language("en", "Tiếng Anh", "English", "�🇧"),
-            Language("en-US", "Tiếng Anh (Mỹ)", "English (US)", "�🇺🇸"),
-            Language("fr", "Tiếng Pháp", "Français", "🇫🇷"),
-            Language("de", "Tiếng Đức", "Deutsch", "🇩🇪"),
-            Language("es", "Tiếng Tây Ban Nha", "Español", "��"),
-            Language("it", "Tiếng Ý", "Italiano", "��"),
-            Language("pt", "Tiếng Bồ Đào Nha", "Português", "��"),
-            Language("pt-BR", "Tiếng Bồ Đào Nha (Brazil)", "Português do Brasil", "��"),
-            Language("ru", "Tiếng Nga", "Русский", "🇷🇺"),
-            Language("pl", "Tiếng Ba Lan", "Polski", "🇵🇱"),
-            Language("nl", "Tiếng Hà Lan", "Nederlands", "��"),
-            Language("sv", "Tiếng Thụy Điển", "Svenska", "🇸🇪"),
-            Language("da", "Tiếng Đan Mạch", "Dansk", "🇩🇰"),
-            Language("fi", "Tiếng Phần Lan", "Suomi", "🇫🇮"),
-            Language("no", "Tiếng Na Uy", "Norsk", "🇳🇴"),
-            Language("cs", "Tiếng Séc", "Čeština", "🇨🇿"),
-            Language("hu", "Tiếng Hungary", "Magyar", "🇭🇺"),
-            Language("ro", "Tiếng Rumani", "Română", "🇷�"),
-            Language("tr", "Tiếng Thổ Nhĩ Kỳ", "Türkçe", "🇹🇷"),
-            Language("el", "Tiếng Hy Lạp", "Ελληνικά", "🇬🇷"),
-            
-            // Trung Đông & Châu Phi
-            Language("ar", "Tiếng Ả Rập", "العربية", "🇸🇦"),
-            Language("he", "Tiếng Do Thái", "עברית", "🇮🇱"),
-            Language("fa", "Tiếng Ba Tư", "فارسی", "🇮�"),
-            Language("sw", "Tiếng Swahili", "Kiswahili", "🇰🇪"),
-            Language("am", "Tiếng Amharic", "አማርኛ", "🇪🇹"),
-            
-            // Châu Mỹ Latin
-            Language("es-MX", "Tiếng Tây Ban Nha (Mexico)", "Español de México", "🇲🇽"),
-            
-            // Khác
-            Language("la", "Tiếng Latin", "Lingua Latina", "🏛️")
-        )
-        
-        /**
-         * Nhóm ngôn ngữ theo khu vực
-         */
-        val GROUPED_LANGUAGES = mapOf(
-            "Châu Á" to SAMPLE_LANGUAGES.slice(0..10),
-            "Châu Âu" to SAMPLE_LANGUAGES.slice(11..30),
-            "Trung Đông & Châu Phi" to SAMPLE_LANGUAGES.slice(31..35),
-            "Châu Mỹ Latin" to SAMPLE_LANGUAGES.slice(36..36),
-            "Khác" to SAMPLE_LANGUAGES.slice(37..37)
-        )
-        
-        /**
-         * Lấy ngôn ngữ từ mã
-         */
-        fun getLanguageByCode(code: String): Language? {
-            return GROUPED_LANGUAGES.values.flatten().find { it.code == code }
-        }
+        // ✨ TẠO MỘT DANH SÁCH DUY NHẤT, ĐÃ SẮP XẾP ✨
+        val ALL_LANGUAGES: List<Language> = listOf(
+            Language("af", "Afrikaans", "Afrikaans"),
+            Language("sq", "Albanian", "Shqip"),
+            Language("am", "Amharic", "አማርኛ"),
+            Language("ar", "Arabic", "العربية"),
+            Language("hy", "Armenian", "Հայերեն"),
+            Language("az", "Azerbaijani", "Azərbaycan dili"),
+            Language("eu", "Basque", "Euskara"),
+            Language("be", "Belarusian", "Беларуская"),
+            Language("bn", "Bengali", "বাংলা"),
+            Language("bs", "Bosnian", "Bosanski"),
+            Language("bg", "Bulgarian", "Български"),
+            Language("ca", "Catalan", "Català"),
+            Language("ceb", "Cebuano", "Cebuano"),
+            Language("ny", "Chichewa", "Chichewa"),
+            Language("zh-CN", "Chinese (Simplified)", "简体中文"),
+            Language("zh-TW", "Chinese (Traditional)", "繁體中文"),
+            Language("co", "Corsican", "Corsu"),
+            Language("hr", "Croatian", "Hrvatski"),
+            Language("cs", "Czech", "Čeština"),
+            Language("da", "Danish", "Dansk"),
+            Language("nl", "Dutch", "Nederlands"),
+            Language("en", "English", "English"),
+            Language("eo", "Esperanto", "Esperanto"),
+            Language("et", "Estonian", "Eesti"),
+            Language("tl", "Filipino", "Filipino"),
+            Language("fi", "Finnish", "Suomi"),
+            Language("fr", "French", "Français"),
+            Language("fy", "Frisian", "Frysk"),
+            Language("gl", "Galician", "Galego"),
+            Language("ka", "Georgian", "ქართული"),
+            Language("de", "German", "Deutsch"),
+            Language("el", "Greek", "Ελληνικά"),
+            Language("gu", "Gujarati", "ગુજરાતી"),
+            Language("ht", "Haitian Creole", "Kreyòl ayisyen"),
+            Language("ha", "Hausa", "Hausa"),
+            Language("haw", "Hawaiian", "ʻŌlelo Hawaiʻi"),
+            Language("iw", "Hebrew", "עברית"),
+            Language("hi", "Hindi", "हिन्दी"),
+            Language("hmn", "Hmong", "Hmoob"),
+            Language("hu", "Hungarian", "Magyar"),
+            Language("is", "Icelandic", "Íslenska"),
+            Language("ig", "Igbo", "Igbo"),
+            Language("id", "Indonesian", "Bahasa Indonesia"),
+            Language("ga", "Irish", "Gaeilge"),
+            Language("it", "Italian", "Italiano"),
+            Language("ja", "Japanese", "日本語"),
+            Language("jw", "Javanese", "Basa Jawa"),
+            Language("kn", "Kannada", "ಕನ್ನಡ"),
+            Language("kk", "Kazakh", "Қазақ тілі"),
+            Language("km", "Khmer", "ភាសាខ្មែរ"),
+            Language("ko", "Korean", "한국어"),
+            Language("ku", "Kurdish (Kurmanji)", "Kurdî (Kurmancî)"),
+            Language("ky", "Kyrgyz", "Кыргызча"),
+            Language("lo", "Lao", "ລາວ"),
+            Language("la", "Latin", "Latina"),
+            Language("lv", "Latvian", "Latviešu"),
+            Language("lt", "Lithuanian", "Lietuvių"),
+            Language("lb", "Luxembourgish", "Lëtzebuergesch"),
+            Language("mk", "Macedonian", "Македонски"),
+            Language("mg", "Malagasy", "Malagasy"),
+            Language("ms", "Malay", "Bahasa Melayu"),
+            Language("ml", "Malayalam", "മലയാളം"),
+            Language("mt", "Maltese", "Malti"),
+            Language("mi", "Maori", "Te Reo Māori"),
+            Language("mr", "Marathi", "मराठी"),
+            Language("mn", "Mongolian", "Монгол"),
+            Language("my", "Myanmar (Burmese)", "ဗမာစာ"),
+            Language("ne", "Nepali", "नेपाली"),
+            Language("no", "Norwegian", "Norsk"),
+            Language("ps", "Pashto", "پښتو"),
+            Language("fa", "Persian", "فارسی"),
+            Language("pl", "Polish", "Polski"),
+            Language("pt", "Portuguese", "Português"),
+            Language("pa", "Punjabi", "ਪੰਜਾਬੀ"),
+            Language("ro", "Romanian", "Română"),
+            Language("ru", "Russian", "Русский"),
+            Language("sm", "Samoan", "Gagana faa Samoa"),
+            Language("gd", "Scots Gaelic", "Gàidhlig"),
+            Language("sr", "Serbian", "Српски"),
+            Language("st", "Sesotho", "Sesotho"),
+            Language("sn", "Shona", "Chishona"),
+            Language("sd", "Sindhi", "سنڌي"),
+            Language("si", "Sinhala", "සිංහල"),
+            Language("sk", "Slovak", "Slovenčina"),
+            Language("sl", "Slovenian", "Slovenščina"),
+            Language("so", "Somali", "Soomaali"),
+            Language("es", "Spanish", "Español"),
+            Language("su", "Sundanese", "Basa Sunda"),
+            Language("sw", "Swahili", "Kiswahili"),
+            Language("sv", "Swedish", "Svenska"),
+            Language("tg", "Tajik", "Тоҷикӣ"),
+            Language("ta", "Tamil", "தமிழ்"),
+            Language("te", "Telugu", "తెలుగు"),
+            Language("th", "Thai", "ไทย"),
+            Language("tr", "Turkish", "Türkçe"),
+            Language("uk", "Ukrainian", "Українська"),
+            Language("ur", "Urdu", "اردو"),
+            Language("uz", "Uzbek", "Oʻzbekcha"),
+            Language("vi", "Vietnamese", "Tiếng Việt"),
+            Language("cy", "Welsh", "Cymraeg"),
+            Language("xh", "Xhosa", "Isixhosa"),
+            Language("yi", "Yiddish", "ייִדיש"),
+            Language("yo", "Yoruba", "Yorùbá"),
+            Language("zu", "Zulu", "Isizulu")
+        ).sortedBy { it.name }
     }
 }
