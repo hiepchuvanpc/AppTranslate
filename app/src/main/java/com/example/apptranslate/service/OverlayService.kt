@@ -70,7 +70,7 @@ class OverlayService : Service(), BubbleViewListener {
     // --- UI Components ---
     private var floatingBubbleView: FloatingBubbleView? = null
     private var globalOverlay: GlobalTranslationOverlay? = null
-    private val resultViews = mutableListOf<View>() // Dùng cho cả 2 chế độ
+    private val magnifierResultViews = mutableListOf<View>()
     private var resultViewParams: WindowManager.LayoutParams? = null
 
     // --- Media Projection ---
@@ -203,66 +203,71 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
-    // THÊM HÀM MỚI
     private fun performGlobalTranslate() = serviceScope.launch {
-        // 1. Tạo và hiển thị overlay rỗng với loading
-        val overlay = GlobalTranslationOverlay(this@OverlayService, windowManager).apply {
-            onDismiss = { setState(ServiceState.IDLE) }
-            showLoading()
-        }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // Cho phép chạm xuyên qua
-            PixelFormat.TRANSLUCENT
-        )
-        windowManager.addView(overlay, params)
-        globalOverlay = overlay
+        showGlobalOverlay()?.let { overlay ->
+            val screenBitmap = captureScreen() ?: return@launch
+            val processedBitmap = preprocessBitmapForOcr(screenBitmap)
+            screenBitmap.recycle()
 
-        // 2. Chụp, xử lý và OCR
-        val screenBitmap = captureScreen() ?: return@launch
-        val processedBitmap = preprocessBitmapForOcr(screenBitmap)
-        screenBitmap.recycle()
+            val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
+            val ocrResult = ocrManager.recognizeTextFromBitmap(processedBitmap, sourceLang)
+            processedBitmap.recycle()
 
-        val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
-        val ocrResult = ocrManager.recognizeTextFromBitmap(processedBitmap, sourceLang)
-        processedBitmap.recycle()
+            overlay.hideLoading()
 
-        overlay.hideLoading()
+            if (ocrResult.textBlocks.isEmpty()) {
+                Toast.makeText(this@OverlayService, "Không tìm thấy văn bản nào.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
 
-        if (ocrResult.textBlocks.isEmpty()) {
-            Toast.makeText(this@OverlayService, "Không tìm thấy văn bản nào.", Toast.LENGTH_SHORT).show()
-            return@launch
-        }
-
-        // 3. Dịch và thêm các view kết quả vào overlay
-        val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
-        val transSource = settingsManager.getTranslationSource()
-        ocrResult.textBlocks.forEach { block ->
-            launch(Dispatchers.IO) {
-                val text = block.text.trim()
-                if (text.isNotBlank() && block.boundingBox != null) {
-                    val translation = translationManager.translate(text, sourceLang, targetLang, transSource)
-                    withContext(Dispatchers.Main) {
-                        val resultView = TranslationResultView(this@OverlayService).apply {
-                            updateText(translation.getOrDefault("..."))
+            val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
+            val transSource = settingsManager.getTranslationSource()
+            ocrResult.textBlocks.forEach { block ->
+                launch(Dispatchers.IO) {
+                    val text = block.text.trim()
+                    if (text.isNotBlank() && block.boundingBox != null) {
+                        val translation = translationManager.translate(text, sourceLang, targetLang, transSource)
+                        withContext(Dispatchers.Main) {
+                            val resultView = TranslationResultView(this@OverlayService).apply {
+                                updateText(translation.getOrDefault("..."))
+                            }
+                            val p = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                                leftMargin = block.boundingBox.left
+                                topMargin = block.boundingBox.top
+                            }
+                            overlay.addResultView(resultView, p)
                         }
-                        // Thêm view con vào overlay với tọa độ chính xác
-                        val p = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-                            leftMargin = block.boundingBox.left
-                            topMargin = block.boundingBox.top
-                        }
-                        overlay.addView(resultView, p)
                     }
                 }
             }
         }
     }
 
+
+    private fun showGlobalOverlay(): GlobalTranslationOverlay? {
+        val overlay = GlobalTranslationOverlay(this, windowManager).apply {
+            onDismiss = {
+                globalOverlay = null
+                setState(ServiceState.IDLE)
+            }
+            showLoading()
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        )
+        windowManager.addView(overlay, params)
+        globalOverlay = overlay
+        return overlay
+    }
+
+
     // THÊM HÀM MỚI
     private fun removeGlobalOverlay() {
+        // Kích hoạt hàm dismiss của overlay, nó sẽ tự dọn dẹp và gọi lại setState
         globalOverlay?.onDismiss?.invoke()
-        globalOverlay = null
     }
 
     // --- BubbleViewListener Implementation ---
@@ -319,9 +324,12 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onFunctionClicked(functionId: String) {
-        setState(ServiceState.IDLE)
-        Toast.makeText(this, "Chức năng: $functionId", Toast.LENGTH_SHORT).show()
-        // TODO: Implement logic for each function here
+        if (functionId == "GLOBAL") {
+            setState(ServiceState.GLOBAL_TRANSLATE_ACTIVE)
+        } else {
+            setState(ServiceState.IDLE)
+            Toast.makeText(this, "Chức năng '$functionId' chưa được triển khai", Toast.LENGTH_SHORT).show()
+        }
     }
 
     // --- New OCR Architecture ---
@@ -385,7 +393,7 @@ class OverlayService : Service(), BubbleViewListener {
         // Xóa kết quả kính lúp cũ trước khi hiển thị cái mới
 
         removeAllMagnifierResults()
-        showSingleMagnifierResult(targetBlock.boundingBox!!)
+        val resultView = showSingleMagnifierResult(targetBlock.boundingBox!!) // Sửa ở đây
         showResultView(targetBlock.boundingBox!!)
         val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
         val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
@@ -396,24 +404,19 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     private fun removeAllMagnifierResults() {
-        resultViews.forEach { view ->
+        magnifierResultViews.forEach { view -> // Sửa ở đây
             try {
                 if (view.isAttachedToWindow) windowManager.removeView(view)
-            } catch (e: Exception) { /*...*/ }
+            } catch (e: Exception) { /* Ignore */ }
         }
-        resultViews.clear()
+        magnifierResultViews.clear() // Sửa ở đây
     }
 
 
     @SuppressLint("InflateParams")
-    private fun showSingleMagnifierResult(position: Rect) {
-        // 1. Tạo một View kết quả mới
+    private fun showSingleMagnifierResult(position: Rect): TranslationResultView {
         val resultView = TranslationResultView(this)
-
-        // 2. Tạo LayoutParams cho view
-        // Bù trừ cho padding của view để nó đè chính xác lên text
         val paddingInPx = (8 * resources.displayMetrics.density).toInt()
-
         val resultViewParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -425,19 +428,16 @@ class OverlayService : Service(), BubbleViewListener {
             x = position.left
             y = position.top - paddingInPx
         }
-
-        // 3. Thêm View vào WindowManager để hiển thị
         windowManager.addView(resultView, resultViewParams)
-
-        // 4. Thêm vào danh sách để có thể xóa đi sau này
-        resultViews.add(resultView)
+        magnifierResultViews.add(resultView) // Sửa ở đây
+        return resultView
     }
 
     private fun stopMagnifierTracking() {
         magnifierJob?.cancel()
         magnifierJob = null
         lastTranslatedBlock = null
-        removeResultView()
+        removeAllMagnifierResults() // Sửa ở đây
     }
 
     // --- UI & Utility Methods ---
