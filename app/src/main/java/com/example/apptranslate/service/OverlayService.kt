@@ -69,7 +69,8 @@ class OverlayService : Service(), BubbleViewListener {
 
     // --- UI Components ---
     private var floatingBubbleView: FloatingBubbleView? = null
-    private var resultView: TranslationResultView? = null
+    private var globalOverlay: GlobalTranslationOverlay? = null
+    private val resultViews = mutableListOf<View>() // Dùng cho cả 2 chế độ
     private var resultViewParams: WindowManager.LayoutParams? = null
 
     // --- Media Projection ---
@@ -85,6 +86,7 @@ class OverlayService : Service(), BubbleViewListener {
     private var imageReader: ImageReader? = null
 
     // --- State Management ---
+    private enum class ServiceState { IDLE, PANEL_OPEN, MAGNIFIER, MOVING_PANEL, GLOBAL_TRANSLATE_ACTIVE }
     private var currentState = ServiceState.IDLE
 
     // --- Lifecycle Methods ---
@@ -171,9 +173,8 @@ class OverlayService : Service(), BubbleViewListener {
         Log.d(TAG, "State changing from $currentState to $newState")
 
         // Dọn dẹp trạng thái cũ
-        if (currentState == ServiceState.MAGNIFIER) {
-            stopMagnifierTracking()
-        }
+        if (currentState == ServiceState.MAGNIFIER) stopMagnifierTracking()
+        if (currentState == ServiceState.GLOBAL_TRANSLATE_ACTIVE) removeGlobalOverlay()
 
         currentState = newState
 
@@ -182,10 +183,9 @@ class OverlayService : Service(), BubbleViewListener {
             ServiceState.IDLE -> {
                 floatingBubbleView?.closePanel()
                 floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
+                floatingBubbleView?.visibility = View.VISIBLE
             }
-            ServiceState.PANEL_OPEN -> {
-                floatingBubbleView?.openPanel()
-            }
+            ServiceState.PANEL_OPEN -> floatingBubbleView?.openPanel()
             ServiceState.MAGNIFIER -> {
                 floatingBubbleView?.closePanel()
                 floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MAGNIFIER)
@@ -194,9 +194,75 @@ class OverlayService : Service(), BubbleViewListener {
             ServiceState.MOVING_PANEL -> {
                 floatingBubbleView?.closePanel()
                 floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MOVING)
-                // Ở trạng thái này, bubble có thể được kéo đi mà không kích hoạt kính lúp
+            }
+            ServiceState.GLOBAL_TRANSLATE_ACTIVE -> {
+                floatingBubbleView?.closePanel()
+                floatingBubbleView?.visibility = View.GONE // Ẩn bubble đi
+                performGlobalTranslate()
             }
         }
+    }
+
+    // THÊM HÀM MỚI
+    private fun performGlobalTranslate() = serviceScope.launch {
+        // 1. Tạo và hiển thị overlay rỗng với loading
+        val overlay = GlobalTranslationOverlay(this@OverlayService, windowManager).apply {
+            onDismiss = { setState(ServiceState.IDLE) }
+            showLoading()
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // Cho phép chạm xuyên qua
+            PixelFormat.TRANSLUCENT
+        )
+        windowManager.addView(overlay, params)
+        globalOverlay = overlay
+
+        // 2. Chụp, xử lý và OCR
+        val screenBitmap = captureScreen() ?: return@launch
+        val processedBitmap = preprocessBitmapForOcr(screenBitmap)
+        screenBitmap.recycle()
+
+        val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
+        val ocrResult = ocrManager.recognizeTextFromBitmap(processedBitmap, sourceLang)
+        processedBitmap.recycle()
+
+        overlay.hideLoading()
+
+        if (ocrResult.textBlocks.isEmpty()) {
+            Toast.makeText(this@OverlayService, "Không tìm thấy văn bản nào.", Toast.LENGTH_SHORT).show()
+            return@launch
+        }
+
+        // 3. Dịch và thêm các view kết quả vào overlay
+        val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
+        val transSource = settingsManager.getTranslationSource()
+        ocrResult.textBlocks.forEach { block ->
+            launch(Dispatchers.IO) {
+                val text = block.text.trim()
+                if (text.isNotBlank() && block.boundingBox != null) {
+                    val translation = translationManager.translate(text, sourceLang, targetLang, transSource)
+                    withContext(Dispatchers.Main) {
+                        val resultView = TranslationResultView(this@OverlayService).apply {
+                            updateText(translation.getOrDefault("..."))
+                        }
+                        // Thêm view con vào overlay với tọa độ chính xác
+                        val p = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                            leftMargin = block.boundingBox.left
+                            topMargin = block.boundingBox.top
+                        }
+                        overlay.addView(resultView, p)
+                    }
+                }
+            }
+        }
+    }
+
+    // THÊM HÀM MỚI
+    private fun removeGlobalOverlay() {
+        globalOverlay?.onDismiss?.invoke()
+        globalOverlay = null
     }
 
     // --- BubbleViewListener Implementation ---
@@ -212,13 +278,17 @@ class OverlayService : Service(), BubbleViewListener {
     override fun onBubbleLongPressed() = setState(ServiceState.MAGNIFIER)
 
     override fun onDragStarted() {
+        // Chỉ kích hoạt kính lúp nếu đang ở trạng thái rảnh rỗi (IDLE).
+        // Nếu đang ở trạng thái MOVING_PANEL, sẽ không làm gì cả, chỉ để cho việc kéo thả diễn ra.
         if (currentState == ServiceState.IDLE) {
             setState(ServiceState.MAGNIFIER)
         }
     }
 
     override fun onDragFinished() {
-        if (currentState == ServiceState.MAGNIFIER) {
+        // Bất kể trạng thái trước đó là gì (kính lúp hay di chuyển),
+        // sau khi kéo thả xong, chúng ta đều quay về trạng thái rảnh rỗi.
+        if (currentState == ServiceState.MAGNIFIER || currentState == ServiceState.MOVING_PANEL) {
             setState(ServiceState.IDLE)
         }
     }
@@ -312,7 +382,10 @@ class OverlayService : Service(), BubbleViewListener {
         val textToTranslate = targetBlock.text.trim()
 
         if (textToTranslate.isBlank()) return
+        // Xóa kết quả kính lúp cũ trước khi hiển thị cái mới
 
+        removeAllMagnifierResults()
+        showSingleMagnifierResult(targetBlock.boundingBox!!)
         showResultView(targetBlock.boundingBox!!)
         val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
         val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
@@ -320,6 +393,44 @@ class OverlayService : Service(), BubbleViewListener {
 
         val translationResult = translationManager.translate(textToTranslate, sourceLang, targetLang, transSource)
         resultView?.updateText(translationResult.getOrDefault("Lỗi dịch"))
+    }
+
+    private fun removeAllMagnifierResults() {
+        resultViews.forEach { view ->
+            try {
+                if (view.isAttachedToWindow) windowManager.removeView(view)
+            } catch (e: Exception) { /*...*/ }
+        }
+        resultViews.clear()
+    }
+
+
+    @SuppressLint("InflateParams")
+    private fun showSingleMagnifierResult(position: Rect) {
+        // 1. Tạo một View kết quả mới
+        val resultView = TranslationResultView(this)
+
+        // 2. Tạo LayoutParams cho view
+        // Bù trừ cho padding của view để nó đè chính xác lên text
+        val paddingInPx = (8 * resources.displayMetrics.density).toInt()
+
+        val resultViewParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = position.left
+            y = position.top - paddingInPx
+        }
+
+        // 3. Thêm View vào WindowManager để hiển thị
+        windowManager.addView(resultView, resultViewParams)
+
+        // 4. Thêm vào danh sách để có thể xóa đi sau này
+        resultViews.add(resultView)
     }
 
     private fun stopMagnifierTracking() {
