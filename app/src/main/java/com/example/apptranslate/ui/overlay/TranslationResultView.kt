@@ -1,12 +1,11 @@
-// File: app/src/main/java/com/example/apptranslate/ui/overlay/TranslationResultView.kt
-
 package com.example.apptranslate.ui.overlay
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
 import android.widget.FrameLayout
-import androidx.appcompat.widget.AppCompatTextView
+import android.widget.TextView
 import com.example.apptranslate.R
 import com.example.apptranslate.databinding.OverlayTranslationResultBinding
 
@@ -14,10 +13,12 @@ import com.example.apptranslate.databinding.OverlayTranslationResultBinding
 class TranslationResultView(context: Context) : FrameLayout(context) {
 
     private val binding: OverlayTranslationResultBinding
-    private val textView: AppCompatTextView
+    private val textView: TextView
 
     init {
-        val inflater = LayoutInflater.from(context)
+        // Sử dụng themed context để tránh lỗi theme
+        val themedContext = ContextThemeWrapper(context, R.style.Theme_AppTranslate_NoActionBar)
+        val inflater = LayoutInflater.from(themedContext)
         binding = OverlayTranslationResultBinding.inflate(inflater, this, true)
         textView = binding.tvTranslatedText
     }

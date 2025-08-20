@@ -1,5 +1,6 @@
 package com.example.apptranslate.ui.overlay.adapter
 
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -40,6 +41,7 @@ class FunctionAdapter(
         private val tvTitle: TextView = itemView.findViewById(R.id.tvFunctionTitle)
 
         fun bind(item: FunctionItem) {
+            Log.d("FunctionAdapter", "Binding item: ${item.id} - ${item.title}")
             ivIcon.setImageResource(item.iconRes)
             tvTitle.text = item.title
 
@@ -50,6 +52,7 @@ class FunctionAdapter(
             // Thiết lập sự kiện click
             if (item.isClickable) {
                 itemView.setOnClickListener {
+                    Log.d("FunctionAdapter", "Item clicked: ${item.id}")
                     onItemClick(item)
                 }
             } else {

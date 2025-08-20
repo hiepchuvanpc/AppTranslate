@@ -50,13 +50,6 @@
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
 
-        <!-- Screen Recording Service -->
-        <service
-            android:name=".ScreenRecordingService"
-            android:foregroundServiceType="mediaProjection"
-            android:enabled="false"
-            android:exported="false" />
-
     </application>
 
 </manifest>

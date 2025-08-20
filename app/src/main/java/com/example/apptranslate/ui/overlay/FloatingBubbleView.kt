@@ -80,7 +80,6 @@ class FloatingBubbleView(
     private val windowManager: WindowManager
     private lateinit var layoutParams: WindowManager.LayoutParams
     private val defaultBubbleBackground: Drawable?
-    private var scrimView: View? = null // View nền mờ để bắt sự kiện chạm bên ngoài
 
     // --- State ---
     private var isPanelOpen = false
@@ -125,10 +124,12 @@ class FloatingBubbleView(
         if (isPanelOpen) return
         isPanelOpen = true
         cancelCollapseTimer()
-        showScrim()
+        // Không cần showScrim() nữa - sẽ xử lý touch bằng cách khác
 
+        // Cập nhật layout params để panel có thể nhận touch events
         layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
         layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         updateViewLayout()
 
         // Đảm bảo panel nằm gọn trong màn hình
@@ -137,6 +138,31 @@ class FloatingBubbleView(
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
         binding.bubbleView.visibility = View.GONE
         binding.controlPanel.root.visibility = View.VISIBLE
+        
+        // Thêm touch listener trực tiếp vào root để xử lý tap outside
+        binding.root.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                // Kiểm tra xem touch có nằm trong vùng panel không
+                val panelView = binding.controlPanel.root
+                val location = IntArray(2)
+                panelView.getLocationOnScreen(location)
+                val panelLeft = location[0]
+                val panelTop = location[1]
+                val panelRight = panelLeft + panelView.width
+                val panelBottom = panelTop + panelView.height
+                
+                val touchX = event.rawX.toInt()
+                val touchY = event.rawY.toInt()
+                
+                // Nếu touch nằm ngoài vùng panel, thì đóng panel
+                if (touchX < panelLeft || touchX > panelRight || 
+                    touchY < panelTop || touchY > panelBottom) {
+                    listener?.onBubbleTapped() // Đóng panel
+                    return@setOnTouchListener true
+                }
+            }
+            false // Cho phép các view con xử lý touch events
+        }
     }
 
     /**
@@ -145,7 +171,13 @@ class FloatingBubbleView(
     fun closePanel() {
         if (!isPanelOpen) return
         isPanelOpen = false
-        hideScrim()
+        // Không cần hideScrim() nữa
+
+        // Khôi phục layout params ban đầu cho bubble
+        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+        // Xóa touch listener khỏi root
+        binding.root.setOnTouchListener(null)
 
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
         binding.controlPanel.root.visibility = View.GONE
@@ -215,7 +247,7 @@ class FloatingBubbleView(
                     val deltaY = event.rawY - initialTouchY
                     if (!isDragging && (abs(deltaX) > ViewConfiguration.get(context).scaledTouchSlop || abs(deltaY) > ViewConfiguration.get(context).scaledTouchSlop)) {
                         isDragging = true
-                        // SỬA Ở ĐÂY: Chỉ gọi onDragStarted khi không ở chế độ MOVE
+                        // Gọi onDragStarted để thông báo cho Service
                         listener?.onDragStarted()
                     }
 
@@ -242,15 +274,25 @@ class FloatingBubbleView(
 
         val functionAdapter = FunctionAdapter { item ->
             // Gửi sự kiện click chức năng ra cho Service xử lý
+            Log.d(TAG, "Function clicked: ${item.id}")
             listener?.onFunctionClicked(item.id)
         }
         recyclerView.adapter = functionAdapter
         functionAdapter.submitList(createFunctionItems())
 
-        // SỬA Ở ĐÂY: Kết nối các nút bấm với listener để Service có thể nhận được
-        controlPanelBinding.buttonHome.setOnClickListener { listener?.onHomeClicked() }
-        controlPanelBinding.buttonMove.setOnClickListener { listener?.onMoveClicked() }
-        controlPanelBinding.buttonLanguageSelection.setOnClickListener { listener?.onLanguageSelectClicked() }
+        // Kết nối các nút bấm với listener để Service có thể nhận được sự kiện
+        controlPanelBinding.buttonHome.setOnClickListener { 
+            Log.d(TAG, "Home button clicked")
+            listener?.onHomeClicked() 
+        }
+        controlPanelBinding.buttonMove.setOnClickListener { 
+            Log.d(TAG, "Move button clicked")
+            listener?.onMoveClicked() 
+        }
+        controlPanelBinding.buttonLanguageSelection.setOnClickListener { 
+            Log.d(TAG, "Language selection button clicked")
+            listener?.onLanguageSelectClicked() 
+        }
     }
     // --- Internal Logic & Animations ---
 
@@ -313,35 +355,31 @@ class FloatingBubbleView(
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun showScrim() {
-        if (scrimView == null) {
-            scrimView = View(context).apply {
-                setBackgroundColor(0x01000000) // Gần như trong suốt để bắt touch event
-                setOnTouchListener { _, _ ->
-                    listener?.onBubbleTapped() // Chạm ra ngoài cũng coi như là tap để đóng panel
-                    true
-                }
-            }
-        }
-        val scrimParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSLUCENT
+    private fun createFunctionItems(): List<FunctionItem> {
+        return listOf(
+            FunctionItem("GLOBAL", R.drawable.ic_global, context.getString(R.string.function_global_translate)),
+            FunctionItem("AREA", R.drawable.ic_crop, context.getString(R.string.function_area_translate)),
+            FunctionItem("IMAGE", R.drawable.ic_image, context.getString(R.string.function_image_translate)),
+            FunctionItem("COPY", R.drawable.ic_copy, context.getString(R.string.function_copy_text)),
+            FunctionItem("AUTO_GLOBAL", R.drawable.ic_auto_play, context.getString(R.string.function_auto_global_translate)),
+            FunctionItem("AUTO_AREA", R.drawable.ic_auto_play, context.getString(R.string.function_auto_area_translate))
         )
-        try {
-            if (scrimView?.isAttachedToWindow == false) windowManager.addView(scrimView, scrimParams)
-        } catch (e: Exception) { Log.e(TAG, "Error adding scrim view", e) }
     }
 
-    private fun hideScrim() {
-        try {
-            if (scrimView?.isAttachedToWindow == true) windowManager.removeView(scrimView)
-        } catch (e: Exception) { Log.e(TAG, "Error removing scrim view", e) }
+    private inner class GestureListener : GestureDetector.SimpleOnGestureListener() {
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            listener?.onBubbleTapped()
+            return true
+        }
+
+        override fun onLongPress(e: MotionEvent) {
+            // Thực hiện haptic feedback để báo hiệu cho người dùng
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            listener?.onBubbleLongPressed()
+        }
     }
 
-    // --- Overridden Methods & Helper classes ---
+    // --- Overridden Methods & Helper methods ---
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -355,7 +393,6 @@ class FloatingBubbleView(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        hideScrim() // Dọn dẹp scrim view khi bubble bị gỡ
         cancelCollapseTimer()
     }
 
@@ -374,7 +411,6 @@ class FloatingBubbleView(
     }
 
     private fun updateScreenDimensions() {
-        // SỬA Ở ĐÂY: Thêm kiểm tra phiên bản Android
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             // Dành cho Android 11 (API 30) trở lên
             val windowMetrics = windowManager.currentWindowMetrics
@@ -413,29 +449,5 @@ class FloatingBubbleView(
             needsUpdate = true
         }
         if (needsUpdate) updateViewLayout()
-    }
-
-    private fun createFunctionItems(): List<FunctionItem> {
-        return listOf(
-            FunctionItem("GLOBAL", R.drawable.ic_global, context.getString(R.string.function_global_translate)),
-            FunctionItem("AREA", R.drawable.ic_crop, context.getString(R.string.function_area_translate)),
-            FunctionItem("IMAGE", R.drawable.ic_image, context.getString(R.string.function_image_translate)),
-            FunctionItem("COPY", R.drawable.ic_copy, context.getString(R.string.function_copy_text)),
-            FunctionItem("AUTO_GLOBAL", R.drawable.ic_auto_play, context.getString(R.string.function_auto_global_translate)),
-            FunctionItem("AUTO_AREA", R.drawable.ic_auto_play, context.getString(R.string.function_auto_area_translate))
-        )
-    }
-
-    private inner class GestureListener : GestureDetector.SimpleOnGestureListener() {
-        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            listener?.onBubbleTapped()
-            return true
-        }
-
-        override fun onLongPress(e: MotionEvent) {
-            // Thực hiện haptic feedback để báo hiệu cho người dùng
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            listener?.onBubbleLongPressed()
-        }
     }
 }

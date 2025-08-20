@@ -2,12 +2,14 @@ package com.example.apptranslate.ui.overlay
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.view.ContextThemeWrapper
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.core.view.isVisible
+import com.example.apptranslate.R
 import com.example.apptranslate.databinding.OverlayGlobalContainerBinding
 
 @SuppressLint("ViewConstructor")
@@ -25,15 +27,17 @@ class GlobalTranslationOverlay(
         // Lắng nghe sự kiện nút Back
         isFocusableInTouchMode = true
 
-        val inflater = LayoutInflater.from(context)
+        // Sử dụng themed context để tránh lỗi theme
+        val themedContext = ContextThemeWrapper(context, R.style.Theme_AppTranslate_NoActionBar)
+        val inflater = LayoutInflater.from(themedContext)
         binding = OverlayGlobalContainerBinding.inflate(inflater, this, true)
         binding.buttonClose.setOnClickListener {
             dismiss()
         }
     }
 
-    fun addResultView(view: View) {
-        binding.container.addView(view)
+    fun addResultView(view: View, params: LayoutParams) {
+        binding.container.addView(view, params)
     }
 
     fun showLoading() {
