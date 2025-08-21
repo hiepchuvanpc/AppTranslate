@@ -26,6 +26,7 @@ class OcrManager private constructor() : Closeable {
 
     /**
      * Lấy hoặc tạo một recognizer cho mã ngôn ngữ cụ thể.
+     * Cải thiện cài đặt để nhận diện chữ nhỏ tốt hơn.
      */
     private fun getRecognizerForLanguage(languageCode: String): TextRecognizer {
         val script = mapLanguageToScript(languageCode)

@@ -41,6 +41,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import java.security.MessageDigest
 
 class OverlayService : Service(), BubbleViewListener {
 
@@ -90,11 +91,18 @@ class OverlayService : Service(), BubbleViewListener {
     // Cache để tránh OCR lặp lại
     private var lastOcrTimestamp = 0L
     private var lastScreenshotHash = 0
+    private var currentScaleFactor = 1.0f
 
     // Cache riêng cho magnifier để tránh lặp lại
     private var lastMagnifierPosition = Rect()
     private var lastMagnifierText = ""
     private var lastMagnifierTimestamp = 0L
+
+    // Thread pool cho xử lý ảnh nặng
+    private val imageProcessingHandler = Handler(Looper.getMainLooper())
+
+    // Semaphore để kiểm soát số lượng translation đồng thời
+    private val translationSemaphore = kotlinx.coroutines.sync.Semaphore(3)
 
     // --- State Management ---
     private enum class ServiceState { IDLE, PANEL_OPEN, MAGNIFIER, MOVING_PANEL, GLOBAL_TRANSLATE_ACTIVE }
@@ -238,16 +246,11 @@ class OverlayService : Service(), BubbleViewListener {
 
     private fun performGlobalTranslate() = serviceScope.launch {
         showGlobalOverlay()?.let { overlay ->
-            // ẨN TẤT CẢ OVERLAY TRƯỚC KHI CHỤP MÀN HÌNH
-            hideAllOverlaysForCapture()
-
-            delay(100) // Đợi overlay ẩn hoàn toàn
             val screenBitmap = captureScreen() ?: return@launch
-            val processedBitmap = preprocessBitmapForOcr(screenBitmap)
+            val (processedBitmap, scaleFactor) = withContext(Dispatchers.Default) {
+                preprocessBitmapForOcr(screenBitmap)
+            }
             screenBitmap.recycle()
-
-            // HIỆN LẠI OVERLAY SAU KHI CHỤP XONG
-            showAllOverlaysAfterCapture()
 
             val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
             val ocrResult = ocrManager.recognizeTextFromBitmap(processedBitmap, sourceLang)
@@ -260,8 +263,21 @@ class OverlayService : Service(), BubbleViewListener {
                 return@launch
             }
 
-            // Log tất cả các block text và bounding box
-            ocrResult.textBlocks.forEachIndexed { idx, block ->
+            // Điều chỉnh bounding box theo scale factor
+            val adjustedBlocks = ocrResult.textBlocks.map { block ->
+                block.boundingBox?.let { box ->
+                    val adjustedBox = Rect(
+                        (box.left / scaleFactor).toInt(),
+                        (box.top / scaleFactor).toInt(),
+                        (box.right / scaleFactor).toInt(),
+                        (box.bottom / scaleFactor).toInt()
+                    )
+                    block.copy(boundingBox = adjustedBox)
+                } ?: block
+            }
+
+            // Log tất cả các block text và bounding box đã điều chỉnh
+            adjustedBlocks.forEachIndexed { idx, block ->
                 val box = block.boundingBox
                 val txt = block.text.trim()
                 if (box != null && txt.isNotBlank()) {
@@ -271,26 +287,28 @@ class OverlayService : Service(), BubbleViewListener {
 
             val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
             val transSource = settingsManager.getTranslationSource()
-            ocrResult.textBlocks.forEach { block ->
+            adjustedBlocks.forEach { block ->
                 launch(Dispatchers.IO) {
                     val text = block.text.trim()
                     if (text.isNotBlank() && block.boundingBox != null) {
-                        val translation = translationManager.translate(text, sourceLang, targetLang, transSource)
-                        withContext(Dispatchers.Main) {
-                            val translatedText = translation.getOrDefault("...")
-                            val resultView = TranslationResultView(this@OverlayService).apply {
-                                // Sử dụng setBoundingBox để tối ưu kích thước và text size
-                                setBoundingBox(block.boundingBox!!, text, translatedText)
-                                updateText(translatedText)
+                        // Sử dụng semaphore để kiểm soát concurrency
+                        translationSemaphore.acquire()
+                        try {
+                            val translation = translationManager.translate(text, sourceLang, targetLang, transSource)
+                            withContext(Dispatchers.Main) {
+                                val resultView = TranslationResultView(this@OverlayService).apply {
+                                    updateText(translation.getOrDefault("..."))
+                                }
+                                val p = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                                    leftMargin = block.boundingBox.left
+                                    topMargin = block.boundingBox.top
+                                }
+                                Log.d(TAG, "[GLOBAL] ResultView text: ${resultView.findViewById<TextView>(R.id.tv_translated_text)?.text}")
+                                Log.d(TAG, "[GLOBAL] ResultView box: Rect(${p.leftMargin}, ${p.topMargin} - ${p.leftMargin + block.boundingBox.width()}, ${p.topMargin + block.boundingBox.height()})")
+                                overlay.addResultView(resultView, p)
                             }
-                            val p = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-                                leftMargin = block.boundingBox.left
-                                topMargin = block.boundingBox.top
-                            }
-                            Log.d(TAG, "[GLOBAL] Original text: '$text'")
-                            Log.d(TAG, "[GLOBAL] ResultView text: $translatedText")
-                            Log.d(TAG, "[GLOBAL] ResultView box: Rect(${p.leftMargin}, ${p.topMargin} - ${p.leftMargin + block.boundingBox.width()}, ${p.topMargin + block.boundingBox.height()})")
-                            overlay.addResultView(resultView, p)
+                        } finally {
+                            translationSemaphore.release()
                         }
                     }
                 }
@@ -433,43 +451,49 @@ class OverlayService : Service(), BubbleViewListener {
                     if (currentState == ServiceState.MAGNIFIER) {
                         val currentTime = System.currentTimeMillis()
 
-                        // Giới hạn tần suất OCR (tối thiểu 2 giây giữa các lần quét cho magnifier)
-                        if (currentTime - lastOcrTimestamp < 2000) {
-                            delay(500)
+                        // Giới hạn tần suất OCR (tối thiểu 3 giây giữa các lần quét)
+                        if (currentTime - lastOcrTimestamp < 3000) {
+                            delay(1000)
                             continue
                         }
 
-                        // CHỈ ẨN RESULT VIEWS, KHÔNG ẨN BUBBLE để tránh mất touch event
-                        withContext(Dispatchers.Main) { hideResultViewsForCapture() }
-                        delay(50) // Đợi overlay ẩn
-
                         val screenBitmap = captureScreen() ?: continue
 
-                        // HIỆN LẠI RESULT VIEWS SAU KHI CHỤP XONG
-                        withContext(Dispatchers.Main) { showResultViewsAfterCapture() }
-
-                        // Kiểm tra xem screenshot có thay đổi không
-                        val currentHash = screenBitmap.hashCode()
+                        // Tính content-based hash thay vì bitmap.hashCode()
+                        val currentHash = calculateBitmapContentHash(screenBitmap)
                         if (currentHash == lastScreenshotHash) {
                             screenBitmap.recycle()
-                            delay(1500)
+                            delay(2000)
                             continue
                         }
 
                         lastScreenshotHash = currentHash
                         lastOcrTimestamp = currentTime
 
-                        val processedBitmap = preprocessBitmapForOcr(screenBitmap)
+                        // Xử lý bitmap trong background và lưu scale factor
+                        val (processedBitmap, scaleFactor) = withContext(Dispatchers.Default) {
+                            preprocessBitmapForOcr(screenBitmap)
+                        }
                         screenBitmap.recycle()
+                        currentScaleFactor = scaleFactor
 
                         val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
                         val ocrResult = ocrManager.recognizeTextFromBitmap(processedBitmap, sourceLang)
                         processedBitmap.recycle()
 
-                        screenTextMap = ocrResult.textBlocks
-
-                        // Gọi GC để dọn dẹp memory
-                        System.gc()
+                        // Điều chỉnh bounding box theo scale factor
+                        val adjustedBlocks = ocrResult.textBlocks.map { block ->
+                            block.boundingBox?.let { box ->
+                                val adjustedBox = Rect(
+                                    (box.left / scaleFactor).toInt(),
+                                    (box.top / scaleFactor).toInt(),
+                                    (box.right / scaleFactor).toInt(),
+                                    (box.bottom / scaleFactor).toInt()
+                                )
+                                block.copy(boundingBox = adjustedBox)
+                            } ?: block
+                        }
+                        screenTextMap = adjustedBlocks
                     } else {
                         // Khi không ở chế độ MAGNIFIER, xóa dữ liệu cũ và tạm dừng
                         screenTextMap = emptyList()
@@ -480,7 +504,7 @@ class OverlayService : Service(), BubbleViewListener {
                 }
 
                 // Tăng thời gian delay và chỉ quét khi cần
-                delay(if (currentState == ServiceState.MAGNIFIER) 1500 else 5000) // 1.5s khi magnifier, 5s khi không
+                delay(if (currentState == ServiceState.MAGNIFIER) 2000 else 5000) // 2s khi magnifier, 5s khi không
             }
         }
     }
@@ -488,7 +512,7 @@ class OverlayService : Service(), BubbleViewListener {
     private fun startMagnifierTracking() {
         if (magnifierJob?.isActive == true) return
         magnifierJob = serviceScope.launch {
-            while (isActive && currentState == ServiceState.MAGNIFIER) {
+            while (isActive) {
                 floatingBubbleView?.let { bubble ->
                     val location = IntArray(2)
                     bubble.getLocationOnScreen(location)
@@ -502,19 +526,12 @@ class OverlayService : Service(), BubbleViewListener {
 
                     findAndTranslateTextAt(bubbleCenterX, bubbleCenterY)
                 }
-                delay(150) // Track pointer với tần suất hợp lý
+                delay(100) // Track pointer 10 times per second
             }
-            Log.d(TAG, "Magnifier tracking stopped - state: $currentState")
         }
     }
 
     private suspend fun findAndTranslateTextAt(bubbleX: Int, bubbleY: Int) {
-        // Đảm bảo chỉ chạy khi đang ở trạng thái MAGNIFIER
-        if (currentState != ServiceState.MAGNIFIER) {
-            Log.d(TAG, "[MAGNIFIER] Dừng: không còn ở trạng thái magnifier")
-            return
-        }
-
         Log.d(TAG, "[MAGNIFIER] screenTextMap size: ${screenTextMap.size}")
         // Log tất cả các block text và bounding box
         screenTextMap.forEachIndexed { idx, block ->
@@ -544,17 +561,17 @@ class OverlayService : Service(), BubbleViewListener {
 
         Log.d(TAG, "[MAGNIFIER] Found block: text='${currentText}', box=$currentPosition")
 
-        // Nếu cùng vị trí, cùng text và chưa đủ thời gian (1.5 giây), thì skip
+        // Nếu cùng vị trí, cùng text và chưa đủ thời gian (2 giây), thì skip
         if (currentPosition == lastMagnifierPosition &&
             currentText == lastMagnifierText &&
-            currentTime - lastMagnifierTimestamp < 1500) {
+            currentTime - lastMagnifierTimestamp < 2000) {
             Log.d(TAG, "[MAGNIFIER] Skip: cùng vị trí và text, chưa đủ delay")
             return // Không dịch lại
         }
 
         // Nếu cùng block như lần trước nhưng chưa đủ thời gian, skip
         if (targetBlock == lastTranslatedBlock &&
-            currentTime - lastMagnifierTimestamp < 1000) {
+            currentTime - lastMagnifierTimestamp < 1500) {
             Log.d(TAG, "[MAGNIFIER] Skip: cùng block như lần trước, chưa đủ delay")
             return
         }
@@ -572,32 +589,24 @@ class OverlayService : Service(), BubbleViewListener {
 
         // Xóa kết quả kính lúp cũ trước khi hiển thị cái mới
         removeAllMagnifierResults()
-        val resultView = showSingleMagnifierResult(targetBlock.boundingBox!!, currentText)
+        val resultView = showSingleMagnifierResult(targetBlock.boundingBox!!)
 
         val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
         val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
         val transSource = settingsManager.getTranslationSource()
 
         Log.d(TAG, "[MAGNIFIER] Đang dịch: '$currentText' ($sourceLang->$targetLang)")
-        val translationResult = translationManager.translate(currentText, sourceLang, targetLang, transSource)
-        Log.d(TAG, "[MAGNIFIER] Kết quả dịch: '${translationResult.getOrDefault("Lỗi dịch")}'")
 
-        // Kiểm tra lại trạng thái trước khi update UI
-        if (currentState == ServiceState.MAGNIFIER) {
-            // Cập nhật bounding box với thông tin text gốc và dịch
-            val translatedText = translationResult.getOrDefault("Lỗi dịch")
-            resultView?.setBoundingBox(targetBlock.boundingBox!!, currentText, translatedText)
-            resultView?.updateText(translatedText)
-        } else {
-            Log.d(TAG, "[MAGNIFIER] Trạng thái đã thay đổi, không update UI")
-            // Remove view nếu trạng thái đã thay đổi
-            resultView?.let { view ->
-                if (view.isAttachedToWindow) {
-                    windowManager.removeView(view)
-                }
-                magnifierResultViews.remove(view)
-            }
+        // Sử dụng semaphore để kiểm soát concurrency
+        translationSemaphore.acquire()
+        val translationResult = try {
+            translationManager.translate(currentText, sourceLang, targetLang, transSource)
+        } finally {
+            translationSemaphore.release()
         }
+
+        Log.d(TAG, "[MAGNIFIER] Kết quả dịch: '${translationResult.getOrDefault("Lỗi dịch")}'")
+        resultView?.updateText(translationResult.getOrDefault("Lỗi dịch"))
     }
 
     private fun removeAllMagnifierResults() {
@@ -613,10 +622,19 @@ class OverlayService : Service(), BubbleViewListener {
     // BÊN TRONG CLASS OverlayService
 
     @SuppressLint("InflateParams")
-    private fun showSingleMagnifierResult(position: Rect, originalText: String = ""): TranslationResultView {
+    private fun showSingleMagnifierResult(position: Rect): TranslationResultView {
         val width = position.width()
         val height = position.height()
-        val resultView = TranslationResultView(this)
+        val resultView = TranslationResultView(this).apply {
+            if (width > 0 && height > 0) {
+                setSize(width, height)
+            } else {
+                Log.d(TAG, "[MAGNIFIER] setSize skipped: width=$width, height=$height")
+            }
+        }
+
+        // TÍNH TOÁN PADDING: Chuyển 4dp (giảm từ 8dp) sang pixel
+        val paddingInPx = (4 * resources.displayMetrics.density).toInt()
 
         val resultViewParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -626,13 +644,12 @@ class OverlayService : Service(), BubbleViewListener {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Đặt chính xác tại vị trí text gốc, không trừ padding
             x = position.left
-            y = position.top
+            y = position.top - paddingInPx
         }
 
         Log.d(TAG, "[MAGNIFIER] addView: x=${resultViewParams.x}, y=${resultViewParams.y}, width=$width, height=$height")
-        Log.d(TAG, "[MAGNIFIER] Original text: '$originalText'")
+        Log.d(TAG, "[MAGNIFIER] ResultView text: ${resultView.findViewById<TextView>(R.id.tv_translated_text)?.text}")
         Log.d(TAG, "[MAGNIFIER] ResultView box: Rect(${resultViewParams.x}, ${resultViewParams.y} - ${resultViewParams.x + width}, ${resultViewParams.y + height})")
         windowManager.addView(resultView, resultViewParams)
         magnifierResultViews.add(resultView)
@@ -670,32 +687,40 @@ class OverlayService : Service(), BubbleViewListener {
 
 
 
-    private fun preprocessBitmapForOcr(bitmap: Bitmap): Bitmap {
-        val scaledBitmap = if (bitmap.width > 1920 || bitmap.height > 1920) {
-            // Scale down để tăng tốc độ OCR nhưng vẫn giữ quality
-            val scale = minOf(1920f / bitmap.width, 1920f / bitmap.height)
-            val newWidth = (bitmap.width * scale).toInt()
-            val newHeight = (bitmap.height * scale).toInt()
+    private fun preprocessBitmapForOcr(bitmap: Bitmap): Pair<Bitmap, Float> {
+        // Tăng độ phân giải tối đa để bảo toàn chữ nhỏ
+        val maxDimension = 2560 // Tăng từ 1920 lên 2560 để giữ chi tiết chữ nhỏ
+        val scaleFactor = if (bitmap.width > maxDimension || bitmap.height > maxDimension) {
+            minOf(maxDimension.toFloat() / bitmap.width, maxDimension.toFloat() / bitmap.height)
+        } else {
+            1.0f
+        }
+
+        val scaledBitmap = if (scaleFactor < 1.0f) {
+            val newWidth = (bitmap.width * scaleFactor).toInt()
+            val newHeight = (bitmap.height * scaleFactor).toInt()
+            // Sử dụng FILTER_BITMAP=true để giữ chi tiết khi scale
             Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
         } else {
             bitmap
         }
 
-        // Tạo bitmap grayscale với contrast cao
+        // Tạo bitmap grayscale với contrast cao - tối ưu cho chữ nhỏ
         val processedBitmap = Bitmap.createBitmap(scaledBitmap.width, scaledBitmap.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(processedBitmap)
         val paint = Paint().apply {
-            isAntiAlias = true
+            isAntiAlias = false // Tắt anti-alias để chữ nhỏ sắc nét hơn
             isFilterBitmap = true
+            isDither = false
         }
 
-        // Matrix để tăng contrast và làm sắc nét text
+        // Matrix để tăng contrast mạnh hơn cho chữ nhỏ
         val colorMatrix = ColorMatrix().apply {
             setSaturation(0f) // Grayscale trước
         }
 
-        // Tăng contrast mạnh hơn để text rõ ràng hơn
-        val contrastScale = 2.5f
+        // Tăng contrast rất mạnh để chữ nhỏ nổi bật
+        val contrastScale = 3.5f // Tăng từ 2.5f lên 3.5f
         val translate = -(contrastScale - 1f) * 128f
         val contrastMatrix = ColorMatrix(floatArrayOf(
             contrastScale, 0f, 0f, 0f, translate,
@@ -705,11 +730,11 @@ class OverlayService : Service(), BubbleViewListener {
         ))
         colorMatrix.postConcat(contrastMatrix)
 
-        // Sharpening filter để làm sắc nét text
+        // Sharpening filter mạnh hơn để làm sắc nét chữ nhỏ
         val sharpenMatrix = ColorMatrix(floatArrayOf(
-            0f, -1f, 0f, 0f, 0f,
-            -1f, 5f, -1f, 0f, 0f,
-            0f, -1f, 0f, 0f, 0f,
+            0f, -1.5f, 0f, 0f, 0f,
+            -1.5f, 7f, -1.5f, 0f, 0f, // Tăng độ sắc nét
+            0f, -1.5f, 0f, 0f, 0f,
             0f, 0f, 0f, 1f, 0f,
             0f, 0f, 0f, 0f, 1f
         ))
@@ -723,7 +748,26 @@ class OverlayService : Service(), BubbleViewListener {
             scaledBitmap.recycle()
         }
 
-        return processedBitmap
+        return Pair(processedBitmap, scaleFactor)
+    }    // Tính content-based hash thay vì bitmap.hashCode()
+    private fun calculateBitmapContentHash(bitmap: Bitmap): Int {
+        val width = bitmap.width
+        val height = bitmap.height
+        val sampleSize = 8 // Sample mỗi 8 pixel để tăng tốc
+
+        val digest = MessageDigest.getInstance("MD5")
+
+        for (y in 0 until height step sampleSize) {
+            for (x in 0 until width step sampleSize) {
+                val pixel = bitmap.getPixel(x, y)
+                digest.update(pixel.toByte())
+                digest.update((pixel shr 8).toByte())
+                digest.update((pixel shr 16).toByte())
+                digest.update((pixel shr 24).toByte())
+            }
+        }
+
+        return digest.digest().contentHashCode()
     }
 
     private suspend fun captureScreen(): Bitmap? = suspendCancellableCoroutine { continuation ->
@@ -735,13 +779,16 @@ class OverlayService : Service(), BubbleViewListener {
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
         val height = metrics.heightPixels
-        val density = metrics.densityDpi
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        // Tăng density để capture với độ phân giải cao hơn - tốt cho chữ nhỏ
+        val density = (metrics.densityDpi * 1.2f).toInt() // Tăng 20% để bảo toàn chi tiết
+
+        // Sử dụng RGBA_8888 để bảo toàn chất lượng màu tối đa
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3) // Tăng buffer từ 2 lên 3
         val virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
             imageReader?.surface, null, handler
         )
 
@@ -778,75 +825,6 @@ class OverlayService : Service(), BubbleViewListener {
             virtualDisplay?.release()
             imageReader?.close()
             imageReader = null
-        }
-    }
-
-    // --- Overlay Management for OCR ---
-
-    // HÀM MỚI: Chỉ ẩn result views, không ẩn bubble để tránh mất touch event
-    private fun hideResultViewsForCapture() {
-        try {
-            // Chỉ ẩn tất cả magnifier result views, KHÔNG ẩn bubble
-            magnifierResultViews.forEach { view ->
-                view.visibility = View.INVISIBLE
-            }
-
-            Log.d(TAG, "Hidden result views for screen capture (bubble still visible)")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error hiding result views for capture", e)
-        }
-    }
-
-    private fun showResultViewsAfterCapture() {
-        try {
-            // Hiện lại tất cả magnifier result views
-            magnifierResultViews.forEach { view ->
-                view.visibility = View.VISIBLE
-            }
-
-            Log.d(TAG, "Restored result views after screen capture")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error showing result views after capture", e)
-        }
-    }
-
-    private fun hideAllOverlaysForCapture() {
-        try {
-            // Ẩn floating bubble
-            floatingBubbleView?.visibility = View.INVISIBLE
-
-            // Ẩn tất cả magnifier result views
-            magnifierResultViews.forEach { view ->
-                view.visibility = View.INVISIBLE
-            }
-
-            // Ẩn global overlay (nhưng không remove để không mất state)
-            globalOverlay?.visibility = View.INVISIBLE
-
-            Log.d(TAG, "Hidden all overlays for screen capture")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error hiding overlays for capture", e)
-        }
-    }
-
-    private fun showAllOverlaysAfterCapture() {
-        try {
-            // Hiện lại floating bubble (chỉ khi không ở trạng thái GLOBAL)
-            if (currentState != ServiceState.GLOBAL_TRANSLATE_ACTIVE) {
-                floatingBubbleView?.visibility = View.VISIBLE
-            }
-
-            // Hiện lại tất cả magnifier result views
-            magnifierResultViews.forEach { view ->
-                view.visibility = View.VISIBLE
-            }
-
-            // Hiện lại global overlay
-            globalOverlay?.visibility = View.VISIBLE
-
-            Log.d(TAG, "Restored all overlays after screen capture")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error showing overlays after capture", e)
         }
     }
 
