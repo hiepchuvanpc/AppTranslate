@@ -73,7 +73,8 @@ class FloatingBubbleView(
         private const val HANDLE_LENGTH = 120f
         private const val HANDLE_ANGLE = PI / 4   // 45 độ
         private const val HANDLE_PIVOT_X_RATIO = 17f / 24f
-        private const val HANDLE_PIVOT_Y_RATIO = 17f / 24f
+        private const val HANDLE_PIVOT_Y_RATIO = 25f / 24f
+        private const val MAGNIFIER_ICON_SCALE = 2.0f
     }
 
     // --- Listener để giao tiếp với Service ---
@@ -194,24 +195,30 @@ class FloatingBubbleView(
         snapToEdge()
     }
 
-    /**
-     * Cập nhật giao diện của bubble (thường, kính lúp, di chuyển).
-     */
+    // ✨ THAY THẾ HÀM updateBubbleAppearance ✨
     fun updateBubbleAppearance(appearance: BubbleAppearance) {
+        // Hàm reset scale về mặc định
+        fun resetIconScale() {
+            binding.ivBubbleIcon.scaleX = 1.0f
+            binding.ivBubbleIcon.scaleY = 1.0f
+        }
+
         when (appearance) {
             BubbleAppearance.NORMAL -> {
                 binding.bubbleView.background = defaultBubbleBackground
                 binding.ivBubbleIcon.setImageResource(R.drawable.ic_translate)
+                resetIconScale()
             }
             BubbleAppearance.MAGNIFIER -> {
                 binding.bubbleView.background = null // Trong suốt
                 binding.ivBubbleIcon.setImageResource(R.drawable.ic_search)
-                binding.ivBubbleIcon.scaleX = 1.5f
-                binding.ivBubbleIcon.scaleY = 1.5f
+                binding.ivBubbleIcon.scaleX = MAGNIFIER_ICON_SCALE
+                binding.ivBubbleIcon.scaleY = MAGNIFIER_ICON_SCALE
             }
             BubbleAppearance.MOVING -> {
                 binding.bubbleView.background = defaultBubbleBackground
                 binding.ivBubbleIcon.setImageResource(R.drawable.ic_drag_indicator)
+                resetIconScale()
             }
         }
     }
