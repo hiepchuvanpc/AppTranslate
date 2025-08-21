@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
@@ -246,6 +247,7 @@ class OverlayService : Service(), BubbleViewListener {
 
     private fun performGlobalTranslate() = serviceScope.launch {
         showGlobalOverlay()?.let { overlay ->
+            removeGlobalOverlay()
             val screenBitmap = captureScreen() ?: return@launch
             val (processedBitmap, scaleFactor) = withContext(Dispatchers.Default) {
                 preprocessBitmapForOcr(screenBitmap)
@@ -685,71 +687,56 @@ class OverlayService : Service(), BubbleViewListener {
         windowManager.addView(floatingBubbleView, params)
     }
 
-
-
     private fun preprocessBitmapForOcr(bitmap: Bitmap): Pair<Bitmap, Float> {
-        // Tăng độ phân giải tối đa để bảo toàn chữ nhỏ
-        val maxDimension = 2560 // Tăng từ 1920 lên 2560 để giữ chi tiết chữ nhỏ
-        val scaleFactor = if (bitmap.width > maxDimension || bitmap.height > maxDimension) {
-            minOf(maxDimension.toFloat() / bitmap.width, maxDimension.toFloat() / bitmap.height)
-        } else {
-            1.0f
-        }
+        val maxDimension = 2560
+        val minDimension = 1080
 
-        val scaledBitmap = if (scaleFactor < 1.0f) {
-            val newWidth = (bitmap.width * scaleFactor).toInt()
-            val newHeight = (bitmap.height * scaleFactor).toInt()
-            // Sử dụng FILTER_BITMAP=true để giữ chi tiết khi scale
-            Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        // Bước 1: Scale UP nếu ảnh nhỏ
+        val scaleUpFactor = if (bitmap.width < minDimension || bitmap.height < minDimension) 2.0f else 1.0f
+        val baseBitmap = if (scaleUpFactor > 1.0f) {
+            Bitmap.createScaledBitmap(bitmap, (bitmap.width * scaleUpFactor).toInt(), (bitmap.height * scaleUpFactor).toInt(), true)
         } else {
             bitmap
         }
 
-        // Tạo bitmap grayscale với contrast cao - tối ưu cho chữ nhỏ
-        val processedBitmap = Bitmap.createBitmap(scaledBitmap.width, scaledBitmap.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(processedBitmap)
-        val paint = Paint().apply {
-            isAntiAlias = false // Tắt anti-alias để chữ nhỏ sắc nét hơn
-            isFilterBitmap = true
-            isDither = false
+        // Bước 2: Scale DOWN nếu ảnh quá lớn
+        val scaleFactor = if (baseBitmap.width > maxDimension || baseBitmap.height > maxDimension) {
+            minOf(maxDimension.toFloat() / baseBitmap.width, maxDimension.toFloat() / baseBitmap.height)
+        } else {
+            1.0f
+        }
+        val scaledBitmap = if (scaleFactor < 1.0f) {
+            Bitmap.createScaledBitmap(baseBitmap, (baseBitmap.width * scaleFactor).toInt(), (baseBitmap.height * scaleFactor).toInt(), true)
+        } else {
+            baseBitmap
         }
 
-        // Matrix để tăng contrast mạnh hơn cho chữ nhỏ
-        val colorMatrix = ColorMatrix().apply {
-            setSaturation(0f) // Grayscale trước
+        val width = scaledBitmap.width
+        val height = scaledBitmap.height
+        val processedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(width * height)
+        scaledBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        // Bước 3: Grayscale + tăng contrast (thay vì threshold cứng)
+        val contrast = 1.5f
+        val brightness = -30
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val gray = (Color.red(c) * 0.299 + Color.green(c) * 0.587 + Color.blue(c) * 0.114).toInt()
+
+            val v = ((gray * contrast) + brightness).coerceIn(0f, 255f).toInt()
+            pixels[i] = Color.rgb(v, v, v)
         }
 
-        // Tăng contrast rất mạnh để chữ nhỏ nổi bật
-        val contrastScale = 3.5f // Tăng từ 2.5f lên 3.5f
-        val translate = -(contrastScale - 1f) * 128f
-        val contrastMatrix = ColorMatrix(floatArrayOf(
-            contrastScale, 0f, 0f, 0f, translate,
-            0f, contrastScale, 0f, 0f, translate,
-            0f, 0f, contrastScale, 0f, translate,
-            0f, 0f, 0f, 1f, 0f
-        ))
-        colorMatrix.postConcat(contrastMatrix)
+        processedBitmap.setPixels(pixels, 0, width, 0, 0, width, height)
 
-        // Sharpening filter mạnh hơn để làm sắc nét chữ nhỏ
-        val sharpenMatrix = ColorMatrix(floatArrayOf(
-            0f, -1.5f, 0f, 0f, 0f,
-            -1.5f, 7f, -1.5f, 0f, 0f, // Tăng độ sắc nét
-            0f, -1.5f, 0f, 0f, 0f,
-            0f, 0f, 0f, 1f, 0f,
-            0f, 0f, 0f, 0f, 1f
-        ))
-        colorMatrix.postConcat(sharpenMatrix)
+        if (scaledBitmap != bitmap) scaledBitmap.recycle()
+        if (baseBitmap != bitmap && baseBitmap != scaledBitmap) baseBitmap.recycle()
 
-        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
-        canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
+        return Pair(processedBitmap, scaleFactor * scaleUpFactor)
+    }
 
-        // Cleanup
-        if (scaledBitmap != bitmap) {
-            scaledBitmap.recycle()
-        }
 
-        return Pair(processedBitmap, scaleFactor)
-    }    // Tính content-based hash thay vì bitmap.hashCode()
     private fun calculateBitmapContentHash(bitmap: Bitmap): Int {
         val width = bitmap.width
         val height = bitmap.height
