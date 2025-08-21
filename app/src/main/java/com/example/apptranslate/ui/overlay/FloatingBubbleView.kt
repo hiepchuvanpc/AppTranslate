@@ -133,12 +133,10 @@ class FloatingBubbleView(
         if (isPanelOpen) return
         isPanelOpen = true
         cancelCollapseTimer()
-        // Không cần showScrim() nữa - sẽ xử lý touch bằng cách khác
 
-        // Cập nhật layout params để panel có thể nhận touch events
+        // Cập nhật layout params để panel có kích thước phù hợp
         layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
         layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
-        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         updateViewLayout()
 
         // Đảm bảo panel nằm gọn trong màn hình
@@ -147,45 +145,16 @@ class FloatingBubbleView(
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
         binding.bubbleView.visibility = View.GONE
         binding.controlPanel.root.visibility = View.VISIBLE
-
-        // Thêm touch listener trực tiếp vào root để xử lý tap outside
-        binding.root.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                // Kiểm tra xem touch có nằm trong vùng panel không
-                val panelView = binding.controlPanel.root
-                val location = IntArray(2)
-                panelView.getLocationOnScreen(location)
-                val panelLeft = location[0]
-                val panelTop = location[1]
-                val panelRight = panelLeft + panelView.width
-                val panelBottom = panelTop + panelView.height
-
-                val touchX = event.rawX.toInt()
-                val touchY = event.rawY.toInt()
-
-                // Nếu touch nằm ngoài vùng panel, thì đóng panel
-                if (touchX < panelLeft || touchX > panelRight ||
-                    touchY < panelTop || touchY > panelBottom) {
-                    listener?.onBubbleTapped() // Đóng panel
-                    return@setOnTouchListener true
-                }
-            }
-            false // Cho phép các view con xử lý touch events
-        }
     }
 
     /**
-     * Đóng panel điều khiển với animation.
-     */
+    * Đóng panel điều khiển với animation.
+    */
     fun closePanel() {
         if (!isPanelOpen) return
         isPanelOpen = false
-        // Không cần hideScrim() nữa
 
-        // Khôi phục layout params ban đầu cho bubble
-        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-
-        // Xóa touch listener khỏi root
+        // Gỡ bỏ listener cũ nếu có (để đảm bảo sạch sẽ)
         binding.root.setOnTouchListener(null)
 
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
@@ -252,45 +221,27 @@ class FloatingBubbleView(
                 MotionEvent.ACTION_DOWN -> {
                     initialX = layoutParams.x
                     initialY = layoutParams.y
-
-                    // ✨ LOGIC MỚI: TÍNH TOÁN OFFSET ĐỂ "CÁN" ĐI THEO NGÓN TAY ✨
-                    // Lấy kích thước hiện tại của bubble view
-                    val bubbleWidth = binding.bubbleView.width
-                    val bubbleHeight = binding.bubbleView.height
-
-                    // Tính toán điểm pivot của "cán" trong tọa độ của View
-                    val handlePivotX = bubbleWidth * HANDLE_PIVOT_X_RATIO
-                    val handlePivotY = bubbleHeight * HANDLE_PIVOT_Y_RATIO
-
-                    // Offset là khoảng cách từ góc trên-trái của View đến điểm pivot của cán.
-                    // Khi kéo, chúng ta sẽ đặt góc trên-trái của View bằng (vị trí ngón tay - offset)
-                    // để điểm pivot của cán luôn nằm dưới ngón tay.
-                    dragOffsetX = handlePivotX
-                    dragOffsetY = handlePivotY
-
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
                     expandBubble()
                     cancelCollapseTimer()
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    // Tọa độ ngón tay hiện tại
                     val newRawX = event.rawX
                     val newRawY = event.rawY
 
-                    // Bắt đầu kéo nếu di chuyển đủ xa
                     if (!isDragging) {
                         val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-                        // So sánh với vị trí chạm ban đầu để quyết định bắt đầu kéo
-                        if (abs(newRawX - (initialX + dragOffsetX)) > touchSlop ||
-                            abs(newRawY - (initialY + dragOffsetY)) > touchSlop) {
+                        if (abs(newRawX - initialTouchX) > touchSlop || abs(newRawY - initialTouchY) > touchSlop) {
                             isDragging = true
                             listener?.onDragStarted()
                         }
                     }
 
                     if (isDragging) {
-                        // ✨ CẬP NHẬT VỊ TRÍ VIEW DỰA TRÊN OFFSET CỦA CÁN ✨
-                        layoutParams.x = (newRawX - dragOffsetX).toInt()
-                        layoutParams.y = (newRawY - dragOffsetY).toInt()
+                        // Logic kéo thả đơn giản: di chuyển bubble theo ngón tay
+                        layoutParams.x = initialX + (newRawX - initialTouchX).toInt()
+                        layoutParams.y = initialY + (newRawY - initialTouchY).toInt()
                         updateViewLayout()
                     }
                 }

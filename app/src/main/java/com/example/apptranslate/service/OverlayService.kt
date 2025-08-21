@@ -42,6 +42,9 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import android.graphics.Point
+import android.view.Display
+import android.view.WindowInsets
 
 @SuppressLint("ViewConstructor")
 class OverlayService : Service(), BubbleViewListener {
@@ -75,6 +78,7 @@ class OverlayService : Service(), BubbleViewListener {
     private lateinit var settingsManager: SettingsManager
     private val ocrManager by lazy { OcrManager.getInstance() }
     private lateinit var translationManager: TranslationManager
+    private var dismissOverlay: View? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private var floatingBubbleView: FloatingBubbleView? = null
@@ -95,7 +99,14 @@ class OverlayService : Service(), BubbleViewListener {
 
     private val translationSemaphore = kotlinx.coroutines.sync.Semaphore(3)
 
-    private enum class ServiceState { IDLE, PANEL_OPEN, MAGNIFIER, MOVING_PANEL, GLOBAL_TRANSLATE_ACTIVE }
+    private enum class ServiceState {
+        IDLE,
+        PANEL_OPEN,
+        MAGNIFIER,
+        MOVING_PANEL,
+        GLOBAL_TRANSLATE_ACTIVE,
+        MAGNIFIER_RESULT_VISIBLE // <-- Thêm trạng thái này
+    }
     private var currentState = ServiceState.IDLE
 
     override fun onCreate() {
@@ -121,18 +132,24 @@ class OverlayService : Service(), BubbleViewListener {
         super.onDestroy()
     }
 
-    // ✨ [SỬA LỖI] Thêm hàm onBind bắt buộc ✨
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun setState(newState: ServiceState) {
         if (currentState == newState) return
         Log.d(TAG, "State changing from $currentState to $newState")
 
-        if (currentState == ServiceState.MAGNIFIER) stopMagnifierTracking()
-        if (currentState == ServiceState.GLOBAL_TRANSLATE_ACTIVE) removeGlobalOverlay()
+        // --- Xử lý logic KHI RỜI KHỎI trạng thái cũ ---
+        when (currentState) {
+            ServiceState.MAGNIFIER -> stopMagnifierLoop() // Khi rời chế độ lúp, chỉ dừng quét
+            ServiceState.GLOBAL_TRANSLATE_ACTIVE -> removeGlobalOverlay()
+            ServiceState.PANEL_OPEN -> removeDismissOverlay()
+            ServiceState.MAGNIFIER_RESULT_VISIBLE -> removeDismissOverlay()
+            else -> {}
+        }
 
         currentState = newState
 
+        // --- Xử lý logic KHI BƯỚC VÀO trạng thái mới ---
         when (newState) {
             ServiceState.IDLE -> {
                 floatingBubbleView?.closePanel()
@@ -140,9 +157,14 @@ class OverlayService : Service(), BubbleViewListener {
                 floatingBubbleView?.visibility = View.VISIBLE
                 ocrJob?.cancel()
                 screenTextMap = emptyList()
+                removeAllMagnifierResults() // Khi về IDLE, xóa mọi kết quả còn sót lại
             }
-            ServiceState.PANEL_OPEN -> floatingBubbleView?.openPanel()
+            ServiceState.PANEL_OPEN -> {
+                floatingBubbleView?.openPanel()
+                showDismissOverlay()
+            }
             ServiceState.MAGNIFIER -> {
+                removeAllMagnifierResults() // Xóa kết quả cũ trước khi bắt đầu lúp mới
                 floatingBubbleView?.closePanel()
                 floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MAGNIFIER)
                 startMagnifierTracking()
@@ -156,13 +178,25 @@ class OverlayService : Service(), BubbleViewListener {
                 floatingBubbleView?.closePanel()
                 performGlobalTranslate()
             }
+            ServiceState.MAGNIFIER_RESULT_VISIBLE -> {
+                // Kết quả đã có trên màn hình, chỉ cần trả bubble về trạng thái bình thường
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
+                showDismissOverlay() // Hiển thị lớp phủ đóng khi có kết quả
+            }
         }
     }
 
     private fun performGlobalTranslate() = serviceScope.launch {
+        // 1. Ẩn panel nổi
         floatingBubbleView?.visibility = View.GONE
+
+        // ✨ GIẢI PHÁP: Thêm một khoảng trễ nhỏ để đảm bảo UI đã được cập nhật ✨
+        delay(100) // Đợi 100ms
+
+        // 2. Chụp ảnh màn hình sau khi panel đã thực sự biến mất
         val screenBitmap = captureScreen() ?: run {
             Toast.makeText(this@OverlayService, "Không thể chụp màn hình", Toast.LENGTH_SHORT).show()
+            // Quan trọng: Hiển thị lại bubble nếu quá trình chụp ảnh thất bại
             setState(ServiceState.IDLE)
             return@launch
         }
@@ -179,10 +213,12 @@ class OverlayService : Service(), BubbleViewListener {
 
         if (ocrResult.textBlocks.isEmpty()) {
             Toast.makeText(this@OverlayService, "Không tìm thấy văn bản nào.", Toast.LENGTH_SHORT).show()
+            // Thêm dòng này để đóng overlay và hiển thị lại bubble nếu không có text
+            removeGlobalOverlay()
+            setState(ServiceState.IDLE)
             return@launch
         }
 
-        // ✨ BỎ HOÀN TOÀN VIỆC TÍNH TOÁN STATUS BAR VÀ PADDING ✨
         val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
         val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
         val transSource = settingsManager.getTranslationSource()
@@ -201,13 +237,19 @@ class OverlayService : Service(), BubbleViewListener {
                                 updateText(translation.getOrDefault("..."))
                             }
 
-                            // ✨ ĐẶT KÍCH THƯỚC VÀ VỊ TRÍ CHÍNH XÁC BẰNG BOUNDING BOX GỐC ✨
-                            val params = FrameLayout.LayoutParams(
-                                boundingBox.width(),  // Width = width của text gốc
-                                boundingBox.height()  // Height = height của text gốc
-                            ).apply {
-                                leftMargin = boundingBox.left // Vị trí X
-                                topMargin = boundingBox.top   // Vị trí Y
+                            // ✨ THÊM LỀ ẢO 2DP ĐỂ BOX TO HƠN ✨
+                            val paddingDp = 2f
+                            val paddingPx = (paddingDp * resources.displayMetrics.density).toInt()
+
+                            val viewWidth = boundingBox.width() + (paddingPx * 2)
+                            val viewHeight = boundingBox.height() + (paddingPx * 2)
+
+                            val viewLeft = boundingBox.centerX() - (viewWidth / 2)
+                            val viewTop = boundingBox.centerY() - (viewHeight / 2)
+
+                            val params = FrameLayout.LayoutParams(viewWidth, viewHeight).apply {
+                                leftMargin = viewLeft
+                                topMargin = viewTop
                             }
 
                             overlay?.addResultView(resultView, params)
@@ -252,49 +294,37 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
-    // ✨ THAY THẾ HÀM startMagnifierTracking ✨
     private fun startMagnifierTracking() {
         if (magnifierJob?.isActive == true) return
 
-        // Bắt đầu một coroutine mới cho toàn bộ logic của kính lúp
         magnifierJob = serviceScope.launch {
-            // BƯỚC 1: Đảm bảo lần quét OCR đầu tiên phải hoàn thành TRƯỚC KHI theo dõi con trỏ.
-            // job.join() sẽ tạm dừng coroutine này cho đến khi ocrJob hoàn tất.
+            // Đảm bảo lần quét OCR đầu tiên phải hoàn thành
             ocrJob?.join()
             Log.d(TAG, "Initial OCR scan finished. Starting magnifier tracking.")
 
-            // BƯỚC 2: Sau khi đã có dữ liệu OCR, bắt đầu vòng lặp theo dõi con trỏ siêu nhanh.
             while (isActive && currentState == ServiceState.MAGNIFIER) {
                 floatingBubbleView?.let { bubble ->
-                    if (bubble.width == 0) { delay(10); return@let }
+                    // Lấy vị trí hiện tại của bubble trên màn hình
+                    val bubbleLocation = IntArray(2)
+                    bubble.getLocationOnScreen(bubbleLocation)
 
-                    val location = IntArray(2)
-                    bubble.getLocationOnScreen(location)
+                    // ✨ GIẢI PHÁP: Điểm quét chính là TÂM của bubble ✨
+                    // Điều này khớp với vị trí ngón tay của người dùng.
+                    val scanTargetX = bubbleLocation[0] + bubble.width / 2
+                    val scanTargetY = bubbleLocation[1] + bubble.height / 2
 
-                    val handleScreenX = location[0] + (bubble.width * HANDLE_PIVOT_X_RATIO)
-                    val handleScreenY = location[1] + (bubble.height * HANDLE_PIVOT_Y_RATIO)
-
-                    val baseScaleFactor = bubble.width / ICON_VIEWPORT_SIZE
-
-                    val pixelOffsetX = (LENS_OFFSET_X_UNITS * baseScaleFactor * MAGNIFIER_ICON_SCALE)
-                    val pixelOffsetY = (LENS_OFFSET_Y_UNITS * baseScaleFactor * MAGNIFIER_ICON_SCALE)
-
-                    val ocrTargetX = (handleScreenX + pixelOffsetX).toInt()
-                    val ocrTargetY = (handleScreenY + pixelOffsetY).toInt()
-
-                    // Hàm này giờ sẽ luôn có dữ liệu để tìm kiếm ngay từ lần đầu
-                    findAndTranslateTextAt(ocrTargetX, ocrTargetY)
+                    // Tìm và dịch văn bản tại điểm quét
+                    findAndTranslateTextAt(scanTargetX, scanTargetY)
                 }
-                delay(100)
+                delay(100) // Tần suất quét
             }
         }
     }
 
-    private fun stopMagnifierTracking() {
+    private fun stopMagnifierLoop() {
         magnifierJob?.cancel()
         magnifierJob = null
         lastTranslatedBlock = null
-        removeAllMagnifierResults()
     }
 
     private suspend fun findAndTranslateTextAt(targetX: Int, targetY: Int) {
@@ -396,6 +426,8 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
+    // File: app/src/main/java/com/example/apptranslate/service/OverlayService.kt
+
     private fun showGlobalOverlay(): GlobalTranslationOverlay? {
         val overlay = GlobalTranslationOverlay(this, windowManager).apply {
             onDismiss = {
@@ -410,8 +442,9 @@ class OverlayService : Service(), BubbleViewListener {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            // ✨ ĐÃ XÓA FLAG GÂY XUNG ĐỘT ✨
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         )
@@ -434,10 +467,15 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onBubbleTapped() {
-        if (currentState == ServiceState.PANEL_OPEN) {
-            setState(ServiceState.IDLE)
-        } else {
-            setState(ServiceState.PANEL_OPEN)
+        when (currentState) {
+            ServiceState.PANEL_OPEN, ServiceState.MAGNIFIER_RESULT_VISIBLE -> {
+                // Nếu panel đang mở, hoặc đang xem kết quả lúp, chạm vào bubble sẽ về IDLE
+                setState(ServiceState.IDLE)
+            }
+            else -> {
+                // Mặc định, chạm vào bubble sẽ mở panel
+                setState(ServiceState.PANEL_OPEN)
+            }
         }
     }
 
@@ -450,7 +488,11 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onDragFinished() {
-        if (currentState == ServiceState.MAGNIFIER || currentState == ServiceState.MOVING_PANEL) {
+        if (currentState == ServiceState.MAGNIFIER) {
+            // Khi thả tay ở chế độ lúp, chuyển sang trạng thái hiển thị kết quả
+            setState(ServiceState.MAGNIFIER_RESULT_VISIBLE)
+            triggerFullScreenOcr() // Vẫn quét nền để chuẩn bị cho lần tương tác sau
+        } else if (currentState == ServiceState.MOVING_PANEL) {
             setState(ServiceState.IDLE)
             triggerFullScreenOcr()
         }
@@ -499,40 +541,33 @@ class OverlayService : Service(), BubbleViewListener {
     private fun showSingleMagnifierResult(position: Rect): TranslationResultView {
         val resultView = TranslationResultView(this)
 
-        // ✨ BƯỚC 1: TÍNH TOÁN ĐỘ RỘNG CỦA VIỀN RA PIXEL ✨
-        // Độ rộng của viền được định nghĩa là 1dp trong translation_text_background.xml
-        val strokeWidthDp = 1f
-        val strokeWidthPx = (strokeWidthDp * resources.displayMetrics.density).toInt()
+        // ✨ THÊM LỀ ẢO 2DP ĐỂ BOX TO HƠN ✨
+        val paddingDp = 2f
+        val paddingPx = (paddingDp * resources.displayMetrics.density).toInt()
 
-        // ✨ BƯỚC 2: TẠO LAYOUTPARAMS MỚI VÀ BÙ TRỪ CHO VIỀN ✨
+        val viewWidth = position.width() + (paddingPx * 2)
+        val viewHeight = position.height() + (paddingPx * 2)
+
+        val viewLeft = position.centerX() - (viewWidth / 2)
+        val viewTop = position.centerY() - (viewHeight / 2)
+
         val resultViewParams = WindowManager.LayoutParams(
-            // Cộng thêm viền trái và viền phải (strokeWidthPx * 2)
-            position.width() + (strokeWidthPx * 2),
-
-            // Cộng thêm viền trên và viền dưới (strokeWidthPx * 2)
-            position.height() + (strokeWidthPx * 2),
-
-            // Loại Window
+            viewWidth,
+            viewHeight,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-
-            // Flags
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-
-            // Format
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-
-            // Dịch chuyển View sang trái và lên trên một khoảng bằng độ rộng của viền
-            // để phần nền trắng bên trong khớp chính xác với text gốc.
-            x = position.left - strokeWidthPx
-            y = position.top - strokeWidthPx
+            x = viewLeft
+            y = viewTop
         }
 
-        // Thêm View vào WindowManager
         windowManager.addView(resultView, resultViewParams)
         magnifierResultViews.add(resultView)
         return resultView
@@ -626,17 +661,36 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     private suspend fun captureScreen(): Bitmap? = suspendCancellableCoroutine { continuation ->
-        if (mediaProjection == null || imageReader != null) {
+        if (mediaProjection == null) {
             if (continuation.isActive) continuation.resume(null)
             return@suspendCancellableCoroutine
         }
 
-        val metrics = resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        val density = (metrics.densityDpi * 1.2f).toInt()
+        // ✨ GIẢI PHÁP: Lấy kích thước màn hình thực tế ✨
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val width: Int
+        val height: Int
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val windowMetrics = windowManager.currentWindowMetrics
+            val bounds = windowMetrics.bounds
+            width = bounds.width()
+            height = bounds.height()
+        } else {
+            val display = windowManager.defaultDisplay
+            val size = Point()
+            @Suppress("DEPRECATION")
+            display.getRealSize(size)
+            width = size.x
+            height = size.y
+        }
+
+        val density = resources.displayMetrics.densityDpi
+
+        // Đảm bảo imageReader cũ đã được đóng
+        imageReader?.close()
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+
         val virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             width, height, density,
@@ -653,20 +707,25 @@ class OverlayService : Service(), BubbleViewListener {
                 val rowStride = planes[0].rowStride
                 val rowPadding = rowStride - pixelStride * width
 
-                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                var bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
                 bitmap.copyPixelsFromBuffer(buffer)
                 image.close()
 
+                // Cắt lại bitmap về đúng kích thước màn hình nếu có padding
+                val finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
+                if (bitmap != finalBitmap) {
+                    bitmap.recycle()
+                }
+
+                // Dọn dẹp ngay lập tức
                 virtualDisplay?.release()
                 reader.close()
                 imageReader = null
 
                 if (continuation.isActive) {
-                    val finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                    bitmap.recycle()
                     continuation.resume(finalBitmap)
                 } else {
-                    bitmap.recycle()
+                    finalBitmap.recycle()
                 }
             } else {
                 if (continuation.isActive) continuation.resume(null)
@@ -706,5 +765,43 @@ class OverlayService : Service(), BubbleViewListener {
             .setSmallIcon(R.drawable.ic_translate)
             .setOngoing(true)
             .build()
+    }
+
+    // Thêm hai hàm mới này vào trong class OverlayService
+
+    private fun showDismissOverlay() {
+        if (dismissOverlay != null) return
+        // Tạo một FrameLayout trong suốt, toàn màn hình
+        val overlay = FrameLayout(this).apply {
+            // Lắng nghe sự kiện chạm
+            setOnClickListener {
+                // Khi chạm vào, đưa app về trạng thái IDLE (sẽ tự động xóa kết quả)
+                setState(ServiceState.IDLE)
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            // Flag này cho phép nhận touch nhưng không nhận focus (không cản trở bàn phím, v.v.)
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        windowManager.addView(overlay, params)
+        dismissOverlay = overlay
+    }
+
+    private fun removeDismissOverlay() {
+        dismissOverlay?.let {
+            try {
+                if (it.isAttachedToWindow) {
+                    windowManager.removeView(it)
+                }
+            } catch (e: Exception) { /* Bỏ qua lỗi */ }
+        }
+        dismissOverlay = null
     }
 }
