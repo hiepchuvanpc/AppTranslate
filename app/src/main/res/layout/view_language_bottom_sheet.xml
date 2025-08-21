@@ -113,17 +113,6 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Confirm button -->
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/fabConfirm"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:src="@drawable/ic_check"
-            app:fabSize="normal"
-            android:enabled="false"
-            android:alpha="0.5" />
-
     </LinearLayout>
 
 </FrameLayout>

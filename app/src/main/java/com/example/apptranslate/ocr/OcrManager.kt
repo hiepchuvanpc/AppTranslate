@@ -33,11 +33,26 @@ class OcrManager private constructor() : Closeable {
         return recognizerCache.getOrPut(script) {
             Log.d("OcrManager", "Creating new TextRecognizer for script: $script")
             when (script) {
-                "Japanese" -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-                "Chinese" -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-                "Korean" -> TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-                "Devanagari" -> TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
-                else -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) // Latin và mặc định
+                "Japanese" -> TextRecognition.getClient(
+                    JapaneseTextRecognizerOptions.Builder()
+                        .build()
+                )
+                "Chinese" -> TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder()
+                        .build()
+                )
+                "Korean" -> TextRecognition.getClient(
+                    KoreanTextRecognizerOptions.Builder()
+                        .build()
+                )
+                "Devanagari" -> TextRecognition.getClient(
+                    DevanagariTextRecognizerOptions.Builder()
+                        .build()
+                )
+                else -> TextRecognition.getClient(
+                    TextRecognizerOptions.Builder()
+                        .build()
+                ) // Latin và mặc định với cài đặt tối ưu
             }
         }
     }

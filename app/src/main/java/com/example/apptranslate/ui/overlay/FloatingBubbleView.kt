@@ -138,7 +138,7 @@ class FloatingBubbleView(
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
         binding.bubbleView.visibility = View.GONE
         binding.controlPanel.root.visibility = View.VISIBLE
-        
+
         // Thêm touch listener trực tiếp vào root để xử lý tap outside
         binding.root.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_DOWN) {
@@ -150,12 +150,12 @@ class FloatingBubbleView(
                 val panelTop = location[1]
                 val panelRight = panelLeft + panelView.width
                 val panelBottom = panelTop + panelView.height
-                
+
                 val touchX = event.rawX.toInt()
                 val touchY = event.rawY.toInt()
-                
+
                 // Nếu touch nằm ngoài vùng panel, thì đóng panel
-                if (touchX < panelLeft || touchX > panelRight || 
+                if (touchX < panelLeft || touchX > panelRight ||
                     touchY < panelTop || touchY > panelBottom) {
                     listener?.onBubbleTapped() // Đóng panel
                     return@setOnTouchListener true
@@ -281,17 +281,17 @@ class FloatingBubbleView(
         functionAdapter.submitList(createFunctionItems())
 
         // Kết nối các nút bấm với listener để Service có thể nhận được sự kiện
-        controlPanelBinding.buttonHome.setOnClickListener { 
+        controlPanelBinding.buttonHome.setOnClickListener {
             Log.d(TAG, "Home button clicked")
-            listener?.onHomeClicked() 
+            listener?.onHomeClicked()
         }
-        controlPanelBinding.buttonMove.setOnClickListener { 
+        controlPanelBinding.buttonMove.setOnClickListener {
             Log.d(TAG, "Move button clicked")
-            listener?.onMoveClicked() 
+            listener?.onMoveClicked()
         }
-        controlPanelBinding.buttonLanguageSelection.setOnClickListener { 
+        controlPanelBinding.buttonLanguageSelection.setOnClickListener {
             Log.d(TAG, "Language selection button clicked")
-            listener?.onLanguageSelectClicked() 
+            listener?.onLanguageSelectClicked()
         }
     }
     // --- Internal Logic & Animations ---

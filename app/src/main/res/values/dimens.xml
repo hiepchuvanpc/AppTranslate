@@ -12,7 +12,7 @@
     <dimen name="panel_icon_touch_target_size">58dp</dimen>
     <dimen name="panel_grid_spacing">5dp</dimen>
     <dimen name="panel_icon_size">20dp</dimen>
-    <dimen name="panel_text_size">6sp</dimen>
+    <dimen name="panel_text_size">10sp</dimen>
     <dimen name="button_stroke_width">1dp</dimen>
     <dimen name="panel_button_spacing">8dp</dimen>
     <!-- Card dimensions -->
