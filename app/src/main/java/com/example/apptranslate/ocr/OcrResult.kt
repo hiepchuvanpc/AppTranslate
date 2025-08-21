@@ -3,10 +3,7 @@ package com.example.apptranslate.ocr
 import android.graphics.Rect
 import com.google.mlkit.vision.text.Text
 
-/**
-* Data class để chứa kết quả OCR đã được xử lý.
-* Cấu trúc này làm cho việc sử dụng kết quả ở tầng UI trở nên dễ dàng hơn.
-*/
+// Data classes không thay đổi, vẫn rất tốt.
 data class OcrResult(
     val fullText: String,
     val textBlocks: List<Block>,
@@ -42,18 +39,17 @@ object OcrResultParser {
                 val lineText = line.text.trim()
                 if (lineText.isEmpty()) return@mapNotNull null
 
-                // Lấy elements & xử lý spacing
                 val elements = line.elements.mapNotNull { element ->
                     val elementBox = element.boundingBox ?: return@mapNotNull null
                     val elementText = element.text.trim()
                     if (elementText.isEmpty()) return@mapNotNull null
-
                     OcrResult.Element(elementText, elementBox)
                 }
 
-                // Với line ngắn → thử tách elements theo spacing
-                val mergedText = if (elements.size > 1 && isLikelyLabel(line)) {
-                    joinElementsWithSpacing(elements)
+                if (elements.isEmpty()) return@mapNotNull null
+
+                val mergedText = if (elements.size > 1 && isLikelyMultiWordLabel(line)) {
+                    joinElementsWithHeuristicSpacing(elements)
                 } else {
                     lineText
                 }
@@ -65,8 +61,12 @@ object OcrResultParser {
                 )
             }
 
+            if (lines.isEmpty()) return@mapNotNull null
+
             OcrResult.Block(
-                text = lines.joinToString(" ") { it.text },
+                // ✨ [SỬA ĐỔI] Dùng "\n" để giữ lại cấu trúc xuống dòng trong một block.
+                // Điều này giúp văn bản dễ đọc và dịch chính xác hơn.
+                text = lines.joinToString("\n") { it.text },
                 boundingBox = blockBox,
                 lines = lines
             )
@@ -80,35 +80,54 @@ object OcrResultParser {
     }
 
     /**
-    * Ước lượng xem line này có phải label ngắn không
-    */
-    private fun isLikelyLabel(line: Text.Line): Boolean {
+     * Heuristic to determine if a line is likely a short UI label consisting of multiple words
+     * that MLKit might have failed to space correctly.
+     * @param line The Text.Line object from ML Kit.
+     * @return True if the line is likely a candidate for heuristic spacing.
+     */
+    private fun isLikelyMultiWordLabel(line: Text.Line): Boolean {
         val box = line.boundingBox ?: return false
-        // Ví dụ: line rộng không quá lớn, ít chữ → có khả năng là app label
-        return (line.text.length <= 15 && box.width() < 500)
+        // These are heuristic values, tuned for typical mobile UI elements.
+        // - Text is relatively short.
+        // - Bounding box width is not excessively large.
+        val maxLength = 25
+        val maxWidthPixels = 600
+        return (line.text.length <= maxLength && box.width() < maxWidthPixels)
     }
 
     /**
-    * Ghép element theo khoảng cách boundingBox
-    */
-    private fun joinElementsWithSpacing(elements: List<OcrResult.Element>): String {
+     * Joins text elements into a single string, intelligently adding spaces based on
+     * the horizontal gap between their bounding boxes.
+     * @param elements A list of sorted or unsorted OCR elements from a single line.
+     * @return A single string with spaces potentially added.
+     */
+    private fun joinElementsWithHeuristicSpacing(elements: List<OcrResult.Element>): String {
         if (elements.isEmpty()) return ""
 
+        // Sort elements by their horizontal position to ensure correct order.
         val sorted = elements.sortedBy { it.boundingBox?.left ?: 0 }
-        val sb = StringBuilder()
+        val stringBuilder = StringBuilder()
+
         for (i in sorted.indices) {
-            sb.append(sorted[i].text)
+            stringBuilder.append(sorted[i].text)
+            // Add a space if it's not the last element
             if (i < sorted.lastIndex) {
                 val current = sorted[i].boundingBox
-                val next = sorted[i + 1].boundingBox
+                val next = sorted[i+1].boundingBox
+
                 if (current != null && next != null) {
                     val gap = next.left - current.right
-                    if (gap > current.width() * 0.2f) {
-                        sb.append(" ") // thêm khoảng trắng nếu gap đủ lớn
+                    // Heuristic: A "space" is a gap larger than 20% of the current element's width,
+                    // or a gap larger than 40% of the element's height (for thin characters like 'i' or 'l').
+                    val spaceThresholdWidth = (current.width() * 0.2f).toInt()
+                    val spaceThresholdHeight = (current.height() * 0.4f).toInt()
+
+                    if (gap > spaceThresholdWidth || gap > spaceThresholdHeight) {
+                        stringBuilder.append(" ")
                     }
                 }
             }
         }
-        return sb.toString()
+        return stringBuilder.toString()
     }
 }

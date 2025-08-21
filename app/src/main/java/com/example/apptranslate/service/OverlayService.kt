@@ -61,6 +61,14 @@ class OverlayService : Service(), BubbleViewListener {
         const val EXTRA_TARGET_LANG = "TARGET_LANG"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "overlay_service_channel"
+        // ✨ THÊM CÁC HẰNG SỐ HÌNH HỌC MỚI TỪ ICON ✨
+        private const val ICON_VIEWPORT_SIZE = 24f
+        // Tọa độ tương đối của cán trong icon (17 / 24)
+        private const val HANDLE_PIVOT_X_RATIO = 17f / 24f
+        private const val HANDLE_PIVOT_Y_RATIO = 17f / 24f
+        // Vector offset từ cán (17,17) đến kính (9.5, 9.5)
+        private const val LENS_OFFSET_X_UNITS = 9.5f - 17f // = -7.5
+        private const val LENS_OFFSET_Y_UNITS = 9.5f - 17f // = -7.5
         var isRunning = false
             private set
     }
@@ -93,6 +101,7 @@ class OverlayService : Service(), BubbleViewListener {
     private var lastOcrTimestamp = 0L
     private var lastScreenshotHash = 0
     private var currentScaleFactor = 1.0f
+    private val translationCache = mutableMapOf<String, String>()
 
     // Cache riêng cho magnifier để tránh lặp lại
     private var lastMagnifierPosition = Rect()
@@ -511,44 +520,55 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
 
+    // ✨ THAY THẾ TOÀN BỘ HÀM startMagnifierTracking ✨
     private fun startMagnifierTracking() {
         if (magnifierJob?.isActive == true) return
         magnifierJob = serviceScope.launch {
             while (isActive) {
                 floatingBubbleView?.let { bubble ->
+                    if (bubble.width == 0) { // Chờ view được layout
+                        delay(10)
+                        return@let
+                    }
+
                     val location = IntArray(2)
                     bubble.getLocationOnScreen(location)
+                    val bubbleX = location[0]
+                    val bubbleY = location[1]
 
-                    // Sử dụng chính center của bubble để test
-                    val bubbleCenterX = location[0] + bubble.width / 2
-                    val bubbleCenterY = location[1] + bubble.height / 2
+                    // ✨ TÍNH TOÁN CHÍNH XÁC DỰA TRÊN HÌNH HỌC ✨
+                    // 1. Tính toán vị trí "cán" (nơi ngón tay người dùng đang đặt)
+                    val handleX = bubbleX + (bubble.width * HANDLE_PIVOT_X_RATIO)
+                    val handleY = bubbleY + (bubble.height * HANDLE_PIVOT_Y_RATIO)
 
-                    Log.d(TAG, "Bubble location: (${location[0]}, ${location[1]}), size: ${bubble.width}x${bubble.height}")
-                    Log.d(TAG, "Magnifier cursor at: ($bubbleCenterX, $bubbleCenterY)")
+                    // 2. Tính tỉ lệ scale từ viewport 24x24 ra pixel thực tế
+                    val scaleFactor = bubble.width / ICON_VIEWPORT_SIZE
 
-                    findAndTranslateTextAt(bubbleCenterX, bubbleCenterY)
+                    // 3. Tính toán offset bằng pixel
+                    val pixelOffsetX = (LENS_OFFSET_X_UNITS * scaleFactor).toInt()
+                    val pixelOffsetY = (LENS_OFFSET_Y_UNITS * scaleFactor).toInt()
+
+                    // 4. Tìm vị trí cuối cùng của "mặt kính"
+                    val ocrTargetX = (handleX + pixelOffsetX).toInt()
+                    val ocrTargetY = (handleY + pixelOffsetY).toInt()
+
+                    // 5. Dùng tọa độ này để dịch
+                    findAndTranslateTextAt(ocrTargetX, ocrTargetY)
                 }
-                delay(100) // Track pointer 10 times per second
+                delay(100)
             }
         }
     }
 
-    private suspend fun findAndTranslateTextAt(bubbleX: Int, bubbleY: Int) {
-        Log.d(TAG, "[MAGNIFIER] screenTextMap size: ${screenTextMap.size}")
-        // Log tất cả các block text và bounding box
-        screenTextMap.forEachIndexed { idx, block ->
-            val box = block.boundingBox
-            val txt = block.text.trim()
-            if (box != null && txt.isNotBlank()) {
-                Log.d(TAG, "[MAGNIFIER] Block#$idx: text='${txt}', box=${box}")
-            }
-        }
+    // ✨ THAY THẾ TOÀN BỘ HÀM findAndTranslateTextAt ✨
+    private suspend fun findAndTranslateTextAt(targetX: Int, targetY: Int) {
+        // Tìm khối văn bản tại tọa độ mục tiêu đã được tính toán
         val targetBlock = screenTextMap.find {
-            it.boundingBox?.contains(bubbleX, bubbleY) ?: false
+            it.boundingBox?.contains(targetX, targetY) ?: false
         }
 
+        // Logic bên dưới giữ nguyên như lần review trước, nó đã tối ưu
         if (targetBlock == null) {
-            Log.d(TAG, "[MAGNIFIER] Không tìm thấy block nào tại vị trí ($bubbleX, $bubbleY)")
             if (lastTranslatedBlock != null) {
                 lastTranslatedBlock = null
                 removeAllMagnifierResults()
@@ -556,59 +576,37 @@ class OverlayService : Service(), BubbleViewListener {
             return
         }
 
-        // Kiểm tra xem có phải cùng vị trí và cùng text không
-        val currentPosition = targetBlock.boundingBox!!
-        val currentText = targetBlock.text.trim()
-        val currentTime = System.currentTimeMillis()
-
-        Log.d(TAG, "[MAGNIFIER] Found block: text='${currentText}', box=$currentPosition")
-
-        // Nếu cùng vị trí, cùng text và chưa đủ thời gian (2 giây), thì skip
-        if (currentPosition == lastMagnifierPosition &&
-            currentText == lastMagnifierText &&
-            currentTime - lastMagnifierTimestamp < 2000) {
-            Log.d(TAG, "[MAGNIFIER] Skip: cùng vị trí và text, chưa đủ delay")
-            return // Không dịch lại
-        }
-
-        // Nếu cùng block như lần trước nhưng chưa đủ thời gian, skip
-        if (targetBlock == lastTranslatedBlock &&
-            currentTime - lastMagnifierTimestamp < 1500) {
-            Log.d(TAG, "[MAGNIFIER] Skip: cùng block như lần trước, chưa đủ delay")
+        if (targetBlock == lastTranslatedBlock) {
             return
         }
 
-        // Cập nhật cache
-        lastMagnifierPosition = currentPosition
-        lastMagnifierText = currentText
-        lastMagnifierTimestamp = currentTime
         lastTranslatedBlock = targetBlock
+        val currentText = targetBlock.text.trim()
 
-        if (currentText.isBlank()) {
-            Log.d(TAG, "[MAGNIFIER] Block text rỗng, không hiển thị kết quả")
+        if (currentText.isBlank() || targetBlock.boundingBox == null) {
+            removeAllMagnifierResults()
             return
         }
 
-        // Xóa kết quả kính lúp cũ trước khi hiển thị cái mới
         removeAllMagnifierResults()
-        val resultView = showSingleMagnifierResult(targetBlock.boundingBox!!)
+        val resultView = showSingleMagnifierResult(targetBlock.boundingBox)
+        resultView.showLoading()
+
+        val cachedTranslation = translationCache[currentText]
+        if (cachedTranslation != null) {
+            resultView.updateText(cachedTranslation)
+            return
+        }
 
         val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
         val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
         val transSource = settingsManager.getTranslationSource()
 
-        Log.d(TAG, "[MAGNIFIER] Đang dịch: '$currentText' ($sourceLang->$targetLang)")
+        val translationResult = translationManager.translate(currentText, sourceLang, targetLang, transSource)
+        val translatedText = translationResult.getOrDefault("Lỗi dịch")
 
-        // Sử dụng semaphore để kiểm soát concurrency
-        translationSemaphore.acquire()
-        val translationResult = try {
-            translationManager.translate(currentText, sourceLang, targetLang, transSource)
-        } finally {
-            translationSemaphore.release()
-        }
-
-        Log.d(TAG, "[MAGNIFIER] Kết quả dịch: '${translationResult.getOrDefault("Lỗi dịch")}'")
-        resultView?.updateText(translationResult.getOrDefault("Lỗi dịch"))
+        translationCache[currentText] = translatedText
+        resultView.updateText(translatedText)
     }
 
     private fun removeAllMagnifierResults() {

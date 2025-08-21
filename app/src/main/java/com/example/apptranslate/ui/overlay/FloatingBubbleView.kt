@@ -1,5 +1,3 @@
-// File: app/src/main/java/com/example/apptranslate/ui/overlay/FloatingBubbleView.kt
-
 package com.example.apptranslate.ui.overlay
 
 import android.animation.ValueAnimator
@@ -26,7 +24,9 @@ import com.example.apptranslate.ui.overlay.adapter.FunctionAdapter
 import com.example.apptranslate.ui.overlay.model.FunctionItem
 import kotlinx.coroutines.*
 import kotlin.math.abs
-
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.PI
 /**
  * Interface định nghĩa các sự kiện tương tác mà FloatingBubbleView sẽ gửi ra ngoài.
  * Lớp Service sẽ implement interface này để xử lý logic.
@@ -40,12 +40,11 @@ interface BubbleViewListener {
     fun onLanguageSelectClicked()
     fun onHomeClicked()
     fun onMoveClicked()
-
 }
 
 /**
- * Enum định nghĩa các kiểu hiển thị của bubble.
- */
+* Enum định nghĩa các kiểu hiển thị của bubble.
+*/
 enum class BubbleAppearance {
     NORMAL,
     MAGNIFIER,
@@ -69,6 +68,12 @@ class FloatingBubbleView(
         private const val TAG = "FloatingBubbleView"
         private const val SNAP_ANIMATION_DURATION = 300L
         private const val COLLAPSE_DELAY_MS = 3000L
+        var magnifierCenterX: Int = 0
+        var magnifierCenterY: Int = 0
+        private const val HANDLE_LENGTH = 120f
+        private const val HANDLE_ANGLE = PI / 4   // 45 độ
+        private const val HANDLE_PIVOT_X_RATIO = 17f / 24f
+        private const val HANDLE_PIVOT_Y_RATIO = 17f / 24f
     }
 
     // --- Listener để giao tiếp với Service ---
@@ -94,6 +99,9 @@ class FloatingBubbleView(
     private var initialTouchY = 0f
     private var screenWidth = 0
     private var screenHeight = 0
+    // Biến để lưu offset khi kéo
+    private var dragOffsetX = 0f
+    private var dragOffsetY = 0f
     private val gestureDetector: GestureDetector
 
     init {
@@ -198,6 +206,8 @@ class FloatingBubbleView(
             BubbleAppearance.MAGNIFIER -> {
                 binding.bubbleView.background = null // Trong suốt
                 binding.ivBubbleIcon.setImageResource(R.drawable.ic_search)
+                binding.ivBubbleIcon.scaleX = 1.5f
+                binding.ivBubbleIcon.scaleY = 1.5f
             }
             BubbleAppearance.MOVING -> {
                 binding.bubbleView.background = defaultBubbleBackground
@@ -222,38 +232,58 @@ class FloatingBubbleView(
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTouchListener() {
         binding.bubbleView.setOnTouchListener { _, event ->
-            // Ưu tiên xử lý cử chỉ (tap, long press) trước
+            // Ưu tiên xử lý cử chỉ (tap, long press)
             val consumedByGesture = gestureDetector.onTouchEvent(event)
             if (consumedByGesture) {
                 if (event.action == MotionEvent.ACTION_UP && isDragging) {
-                    // Nếu cử chỉ kết thúc và đang trong trạng thái kéo, thì kết thúc kéo
                     endDrag()
                 }
                 return@setOnTouchListener true
             }
 
-            // Xử lý logic kéo thả
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = layoutParams.x
                     initialY = layoutParams.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    expandBubble() // Mở rộng bubble khi bắt đầu chạm
+
+                    // ✨ LOGIC MỚI: TÍNH TOÁN OFFSET ĐỂ "CÁN" ĐI THEO NGÓN TAY ✨
+                    // Lấy kích thước hiện tại của bubble view
+                    val bubbleWidth = binding.bubbleView.width
+                    val bubbleHeight = binding.bubbleView.height
+
+                    // Tính toán điểm pivot của "cán" trong tọa độ của View
+                    val handlePivotX = bubbleWidth * HANDLE_PIVOT_X_RATIO
+                    val handlePivotY = bubbleHeight * HANDLE_PIVOT_Y_RATIO
+
+                    // Offset là khoảng cách từ góc trên-trái của View đến điểm pivot của cán.
+                    // Khi kéo, chúng ta sẽ đặt góc trên-trái của View bằng (vị trí ngón tay - offset)
+                    // để điểm pivot của cán luôn nằm dưới ngón tay.
+                    dragOffsetX = handlePivotX
+                    dragOffsetY = handlePivotY
+
+                    expandBubble()
                     cancelCollapseTimer()
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val deltaX = event.rawX - initialTouchX
-                    val deltaY = event.rawY - initialTouchY
-                    if (!isDragging && (abs(deltaX) > ViewConfiguration.get(context).scaledTouchSlop || abs(deltaY) > ViewConfiguration.get(context).scaledTouchSlop)) {
-                        isDragging = true
-                        // Gọi onDragStarted để thông báo cho Service
-                        listener?.onDragStarted()
+                    // Tọa độ ngón tay hiện tại
+                    val newRawX = event.rawX
+                    val newRawY = event.rawY
+
+                    // Bắt đầu kéo nếu di chuyển đủ xa
+                    if (!isDragging) {
+                        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+                        // So sánh với vị trí chạm ban đầu để quyết định bắt đầu kéo
+                        if (abs(newRawX - (initialX + dragOffsetX)) > touchSlop ||
+                            abs(newRawY - (initialY + dragOffsetY)) > touchSlop) {
+                            isDragging = true
+                            listener?.onDragStarted()
+                        }
                     }
 
                     if (isDragging) {
-                        layoutParams.x = (initialX + deltaX).toInt()
-                        layoutParams.y = (initialY + deltaY).toInt()
+                        // ✨ CẬP NHẬT VỊ TRÍ VIEW DỰA TRÊN OFFSET CỦA CÁN ✨
+                        layoutParams.x = (newRawX - dragOffsetX).toInt()
+                        layoutParams.y = (newRawY - dragOffsetY).toInt()
                         updateViewLayout()
                     }
                 }
