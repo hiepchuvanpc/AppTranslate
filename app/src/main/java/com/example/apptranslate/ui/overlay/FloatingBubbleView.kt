@@ -137,14 +137,32 @@ class FloatingBubbleView(
         // Cập nhật layout params để panel có kích thước phù hợp
         layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
         layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+
+        // Dòng code gây lỗi đã được xóa bỏ.
+        // Giữ lại các cờ cần thiết ban đầu.
+        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+
         updateViewLayout()
 
-        // Đảm bảo panel nằm gọn trong màn hình
+        // Đảm bảo panel nằm gọn trong màn hình sau khi được vẽ
         post { adjustPanelPosition() }
 
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
         binding.bubbleView.visibility = View.GONE
         binding.controlPanel.root.visibility = View.VISIBLE
+
+        // ✨ Đoạn code xử lý chạm bên ngoài để đóng panel này rất hay, nên giữ lại ✨
+        binding.root.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                val panelRect = Rect()
+                binding.controlPanel.root.getGlobalVisibleRect(panelRect)
+                if (!panelRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
+                    listener?.onBubbleTapped()
+                    return@setOnTouchListener true
+                }
+            }
+            false
+        }
     }
 
     /**
@@ -154,7 +172,7 @@ class FloatingBubbleView(
         if (!isPanelOpen) return
         isPanelOpen = false
 
-        // Gỡ bỏ listener cũ nếu có (để đảm bảo sạch sẽ)
+        // Dọn dẹp listener để tránh rò rỉ và xung đột
         binding.root.setOnTouchListener(null)
 
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
@@ -207,51 +225,53 @@ class FloatingBubbleView(
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTouchListener() {
+        val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+
+            override fun onDown(e: MotionEvent): Boolean {
+                initialX = layoutParams.x
+                initialY = layoutParams.y
+                expandBubble()
+                cancelCollapseTimer()
+                return true // Quan trọng: Phải trả về true để nhận các sự kiện sau
+            }
+
+            // Dùng onSingleTapConfirmed để chắc chắn đây là 1 cú chạm, không phải chạm-kéo
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                listener?.onBubbleTapped()
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                listener?.onBubbleLongPressed()
+            }
+
+            // onScroll sẽ xử lý toàn bộ logic kéo thả
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                // Lần onScroll đầu tiên, báo cho Service biết để vào chế độ kính lúp
+                if (e1 != null && e1.historySize == 0) {
+                    listener?.onDragStarted()
+                }
+
+                val totalDeltaX = e2.rawX - e1!!.rawX
+                val totalDeltaY = e2.rawY - e1!!.rawY
+                layoutParams.x = initialX + totalDeltaX.toInt()
+                layoutParams.y = initialY + totalDeltaY.toInt()
+                updateViewLayout()
+                return true
+            }
+        })
+
         binding.bubbleView.setOnTouchListener { _, event ->
-            // Ưu tiên xử lý cử chỉ (tap, long press)
-            val consumedByGesture = gestureDetector.onTouchEvent(event)
-            if (consumedByGesture) {
-                if (event.action == MotionEvent.ACTION_UP && isDragging) {
-                    endDrag()
-                }
-                return@setOnTouchListener true
+            // Chuyển toàn bộ sự kiện cho GestureDetector
+            val handledByDetector = gestureDetector.onTouchEvent(event)
+
+            // Khi người dùng nhấc tay, luôn gọi endDrag để xử lý logic kết thúc kéo
+            if (event.action == MotionEvent.ACTION_UP) {
+                endDrag()
             }
 
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = layoutParams.x
-                    initialY = layoutParams.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    expandBubble()
-                    cancelCollapseTimer()
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val newRawX = event.rawX
-                    val newRawY = event.rawY
-
-                    if (!isDragging) {
-                        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-                        if (abs(newRawX - initialTouchX) > touchSlop || abs(newRawY - initialTouchY) > touchSlop) {
-                            isDragging = true
-                            listener?.onDragStarted()
-                        }
-                    }
-
-                    if (isDragging) {
-                        // Logic kéo thả đơn giản: di chuyển bubble theo ngón tay
-                        layoutParams.x = initialX + (newRawX - initialTouchX).toInt()
-                        layoutParams.y = initialY + (newRawY - initialTouchY).toInt()
-                        updateViewLayout()
-                    }
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (isDragging) {
-                        endDrag()
-                    }
-                }
-            }
-            true
+            handledByDetector
         }
     }
 
@@ -285,7 +305,6 @@ class FloatingBubbleView(
     // --- Internal Logic & Animations ---
 
     private fun endDrag() {
-        isDragging = false
         snapToEdge()
         listener?.onDragFinished()
     }

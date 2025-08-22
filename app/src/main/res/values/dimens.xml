@@ -7,11 +7,11 @@
     <dimen name="control_panel_max_width">320dp</dimen>
 
     <!-- Function button dimensions -->
-    <dimen name="panel_function_button_size">50dp</dimen>
+    <dimen name="panel_function_button_size">56dp</dimen>
     <!-- Kích thước cho vùng chạm của các nút icon (lớn hơn icon một chút) -->
-    <dimen name="panel_icon_touch_target_size">58dp</dimen>
+    <dimen name="panel_icon_touch_target_size">56dp</dimen>
     <dimen name="panel_grid_spacing">5dp</dimen>
-    <dimen name="panel_icon_size">20dp</dimen>
+    <dimen name="panel_icon_size">24dp</dimen>
     <dimen name="panel_text_size">10sp</dimen>
     <dimen name="button_stroke_width">1dp</dimen>
     <dimen name="panel_button_spacing">8dp</dimen>
