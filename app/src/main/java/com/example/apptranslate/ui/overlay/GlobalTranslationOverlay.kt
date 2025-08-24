@@ -6,11 +6,14 @@ import android.view.ContextThemeWrapper
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import com.example.apptranslate.R
 import com.example.apptranslate.databinding.OverlayGlobalContainerBinding
+import com.example.apptranslate.ocr.OcrResult
 
 @SuppressLint("ViewConstructor")
 class GlobalTranslationOverlay(
@@ -19,15 +22,10 @@ class GlobalTranslationOverlay(
 ) : FrameLayout(context) {
 
     private val binding: OverlayGlobalContainerBinding
-
-    // Callback để thông báo cho Service rằng nó đã bị đóng
     var onDismiss: (() -> Unit)? = null
 
     init {
-        // Lắng nghe sự kiện nút Back
         isFocusableInTouchMode = true
-
-        // Sử dụng themed context để tránh lỗi theme
         val themedContext = ContextThemeWrapper(context, R.style.Theme_AppTranslate_NoActionBar)
         val inflater = LayoutInflater.from(themedContext)
         binding = OverlayGlobalContainerBinding.inflate(inflater, this, true)
@@ -48,7 +46,6 @@ class GlobalTranslationOverlay(
         binding.loadingIndicator.isVisible = false
     }
 
-    // Xử lý nút Back của hệ thống
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
         if (event?.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) {
@@ -66,7 +63,7 @@ class GlobalTranslationOverlay(
                 onDismiss?.invoke()
             }
         } catch (e: Exception) {
-            // Ignore
+            // Bỏ qua
         }
     }
 }
