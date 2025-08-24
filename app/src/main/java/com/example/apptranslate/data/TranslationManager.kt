@@ -13,7 +13,8 @@ import java.net.URLEncoder
 
 class TranslationManager(context: Context) {
 
-    private val settingsManager = SettingsManager.getInstance(context)
+    // Thay vì gọi SettingsManager, giờ đây chúng ta gọi ApiKeyManager
+    private val apiKeyManager = ApiKeyManager.getInstance(context)
 
     suspend fun translate(
         text: String,
@@ -54,23 +55,38 @@ class TranslationManager(context: Context) {
         }
     }
 
+    /**
+     * Dịch văn bản bằng Gemini AI.
+     * Hàm này đã được cập nhật để sử dụng ApiKeyManager.
+     */
     private suspend fun translateWithGemini(text: String, sourceLang: String, targetLang: String): Result<String> {
-        val apiKey = settingsManager.getGeminiApiKey()
-        if (apiKey.isNullOrBlank()) {
-            return Result.failure(Exception("Vui lòng nhập API Key của Gemini trong Cài đặt AI."))
+        // 1. Yêu cầu một key hợp lệ từ ApiKeyManager
+        val apiKey = apiKeyManager.getAvailableKey()
+        if (apiKey == null) {
+            return Result.failure(Exception("Tất cả API Key đã đạt giới hạn. Vui lòng thử lại sau hoặc thêm key mới."))
         }
 
-        return try {
+        var requestSuccessful = false
+        try {
             val generativeModel = GenerativeModel(
-                modelName = "gemini-1.5-flash-latest",
-                apiKey = apiKey
+                // Sử dụng model mới nhất và nhẹ nhất
+                modelName = "gemini-2.5-flash-lite",
+                apiKey = apiKey.key // Lấy chuỗi key từ object được trả về
             )
             val prompt = "Translate the following text from the language with ISO 639-1 code '$sourceLang' to the language with ISO 639-1 code '$targetLang'. Provide only the translated text, without any additional explanations or context: $text"
             val response = generativeModel.generateContent(prompt)
-            Result.success(response.text ?: "Không có kết quả từ AI.")
+
+            // 2. Nếu API trả về kết quả, đánh dấu request là thành công
+            requestSuccessful = response.text != null
+            return Result.success(response.text ?: "Không có kết quả từ AI.")
         } catch (e: Exception) {
+            // Lỗi có thể xảy ra do key không hợp lệ, hết hạn, hoặc vấn đề mạng
             e.printStackTrace()
-            Result.failure(e)
+            return Result.failure(e)
+        } finally {
+            // 3. Luôn luôn cập nhật trạng thái sử dụng của key sau mỗi lần gọi API
+            // Nếu request không thành công (vd: crash), nó sẽ không được tính vào rate limit.
+            apiKeyManager.updateKeyUsage(apiKey.key, requestSuccessful)
         }
     }
 }

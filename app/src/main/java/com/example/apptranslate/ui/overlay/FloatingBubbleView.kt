@@ -207,30 +207,27 @@ class FloatingBubbleView(
         snapToEdge()
     }
 
-    // ✨ THAY THẾ HÀM updateBubbleAppearance ✨
     fun updateBubbleAppearance(appearance: BubbleAppearance) {
-        // Hàm reset scale về mặc định
-        fun resetIconScale() {
+        fun resetIconScaleAndAlpha() {
             binding.ivBubbleIcon.scaleX = 1.0f
             binding.ivBubbleIcon.scaleY = 1.0f
+            binding.bubbleView.alpha = 1.0f // Đảm bảo alpha được reset
         }
 
         when (appearance) {
             BubbleAppearance.NORMAL -> {
                 binding.bubbleView.background = defaultBubbleBackground
                 binding.ivBubbleIcon.setImageResource(R.drawable.ic_translate)
-                resetIconScale()
+                resetIconScaleAndAlpha()
             }
             BubbleAppearance.MAGNIFIER -> {
-                binding.bubbleView.background = null // Trong suốt
-                binding.ivBubbleIcon.setImageResource(R.drawable.ic_search)
-                binding.ivBubbleIcon.scaleX = MAGNIFIER_ICON_SCALE
-                binding.ivBubbleIcon.scaleY = MAGNIFIER_ICON_SCALE
+                // <<< SỬA LỖI: Chỉ cần làm bubble trong suốt, không cần thay icon
+                binding.bubbleView.alpha = 0.0f
             }
             BubbleAppearance.MOVING -> {
                 binding.bubbleView.background = defaultBubbleBackground
                 binding.ivBubbleIcon.setImageResource(R.drawable.ic_drag_indicator)
-                resetIconScale()
+                resetIconScaleAndAlpha()
             }
         }
     }
