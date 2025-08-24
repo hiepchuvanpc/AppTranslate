@@ -141,16 +141,19 @@ class OverlayService : Service(), BubbleViewListener {
         if (currentState == newState) return
         Log.d(TAG, "State changing from $currentState to $newState")
 
+        // --- Dọn dẹp trạng thái cũ ---
         when (currentState) {
             ServiceState.MAGNIFIER -> stopMagnifierLoop()
             ServiceState.GLOBAL_TRANSLATE_ACTIVE -> removeGlobalOverlay()
+            // ✨ DỌN DẸP DISMISS OVERLAY KHI RỜI CÁC TRẠNG THÁI NÀY ✨
+            ServiceState.PANEL_OPEN,
             ServiceState.MAGNIFIER_RESULT_VISIBLE -> removeDismissOverlay()
-            ServiceState.PANEL_OPEN -> removeDismissOverlay() // Xóa overlay nếu có
             else -> {}
         }
 
         currentState = newState
 
+        // --- Thiết lập trạng thái mới ---
         when (newState) {
             ServiceState.IDLE -> {
                 floatingBubbleView?.closePanel()
@@ -161,8 +164,8 @@ class OverlayService : Service(), BubbleViewListener {
                 removeAllMagnifierResults()
             }
             ServiceState.PANEL_OPEN -> {
+                // ✨ HIỂN THỊ DISMISS OVERLAY KHI MỞ PANEL ✨
                 floatingBubbleView?.openPanel()
-                // Không gọi showDismissOverlay() vì FloatingBubbleView đã xử lý
             }
             ServiceState.MAGNIFIER -> {
                 removeAllMagnifierResults()
@@ -180,8 +183,9 @@ class OverlayService : Service(), BubbleViewListener {
                 performGlobalTranslate()
             }
             ServiceState.MAGNIFIER_RESULT_VISIBLE -> {
-                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
+                // ✨ HIỂN THỊ DISMISS OVERLAY KHI HIỆN KẾT QUẢ KÍNH LÚP ✨
                 showDismissOverlay()
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
             }
         }
     }
@@ -222,9 +226,8 @@ class OverlayService : Service(), BubbleViewListener {
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi nghiêm trọng trong quá trình dịch toàn cầu", e)
             removeGlobalOverlay()
-            setState(ServiceState.IDLE)
         } finally {
-            bubble.alpha = 1f
+            setState(ServiceState.IDLE)
         }
     }
 
@@ -504,7 +507,6 @@ class OverlayService : Service(), BubbleViewListener {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
 
-            // Chỉ dùng các cờ an toàn, không có FLAG_LAYOUT_NO_LIMITS
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
 
@@ -798,17 +800,19 @@ class OverlayService : Service(), BubbleViewListener {
             .build()
     }
 
-    // ✨ CÁC HÀM NÀY PHẢI NẰM BÊN TRONG CLASS ✨
     private fun showDismissOverlay() {
         if (dismissOverlay != null) return
-        // Tạo một FrameLayout trong suốt, toàn màn hình
+
+        // Tạo một FrameLayout trong suốt và có thể click
         val overlay = FrameLayout(this).apply {
-            // Lắng nghe sự kiện chạm
+            // Khi click vào overlay này, quay về trạng thái IDLE
             setOnClickListener {
-                // Khi chạm vào, đưa app về trạng thái IDLE (sẽ tự động xóa kết quả)
                 setState(ServiceState.IDLE)
             }
+            isClickable = true
+            isFocusable = false // Không nhận focus để không ảnh hưởng app khác
         }
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -816,12 +820,21 @@ class OverlayService : Service(), BubbleViewListener {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-            // Flag này cho phép nhận touch nhưng không nhận focus (không cản trở bàn phím, v.v.)
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            // FLAG_NOT_FOCUSABLE: Cho phép touch event đi qua nhưng không nhận focus
+            // FLAG_LAYOUT_IN_SCREEN: Vẽ trên toàn bộ màn hình, bao gồm cả status bar
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
-        windowManager.addView(overlay, params)
-        dismissOverlay = overlay
+
+        // Bọc trong try-catch để tránh crash
+        try {
+            windowManager.addView(overlay, params)
+            dismissOverlay = overlay
+            Log.d(TAG, "Dismiss overlay added.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding dismiss overlay", e)
+        }
     }
 
     private fun removeDismissOverlay() {
@@ -829,8 +842,11 @@ class OverlayService : Service(), BubbleViewListener {
             try {
                 if (it.isAttachedToWindow) {
                     windowManager.removeView(it)
+                    Log.d(TAG, "Dismiss overlay removed.")
                 }
-            } catch (e: Exception) { /* Bỏ qua lỗi */ }
+            } catch (e: Exception) {
+                // Bỏ qua lỗi, ví dụ view đã bị gỡ
+            }
         }
         dismissOverlay = null
     }

@@ -14,7 +14,7 @@ import com.example.apptranslate.ui.overlay.model.ControlPanelItem
 class ControlPanelAdapter(
     private val onItemClick: (ControlPanelItem) -> Unit
 ) : ListAdapter<ControlPanelItem, ControlPanelAdapter.ControlViewHolder>(DiffCallback()) {
-    
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ControlViewHolder {
         val binding = ItemControlPanelBinding.inflate(
             LayoutInflater.from(parent.context),
@@ -23,21 +23,21 @@ class ControlPanelAdapter(
         )
         return ControlViewHolder(binding)
     }
-    
+
     override fun onBindViewHolder(holder: ControlViewHolder, position: Int) {
         holder.bind(getItem(position))
     }
-    
+
     inner class ControlViewHolder(
         private val binding: ItemControlPanelBinding
     ) : RecyclerView.ViewHolder(binding.root) {
-        
+
         fun bind(item: ControlPanelItem) {
             binding.apply {
                 // Set icon và title
                 imageViewIcon.setImageResource(item.iconRes)
                 textViewTitle.text = item.title
-                
+
                 // Thiết lập style theo type
                 when (item.type) {
                     ControlPanelItem.Type.CONTROL -> {
@@ -50,11 +50,11 @@ class ControlPanelAdapter(
                         cardView.strokeWidth = 0
                     }
                 }
-                
+
                 // Set enabled state
                 root.isEnabled = item.isEnabled
                 root.alpha = if (item.isEnabled) 1.0f else 0.5f
-                
+
                 // Click listener
                 root.setOnClickListener {
                     if (item.isEnabled) {
@@ -64,12 +64,12 @@ class ControlPanelAdapter(
             }
         }
     }
-    
+
     private class DiffCallback : DiffUtil.ItemCallback<ControlPanelItem>() {
         override fun areItemsTheSame(oldItem: ControlPanelItem, newItem: ControlPanelItem): Boolean {
             return oldItem.id == newItem.id
         }
-        
+
         override fun areContentsTheSame(oldItem: ControlPanelItem, newItem: ControlPanelItem): Boolean {
             return oldItem == newItem
         }

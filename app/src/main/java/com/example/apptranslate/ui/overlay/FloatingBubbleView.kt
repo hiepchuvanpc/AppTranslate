@@ -92,6 +92,7 @@ class FloatingBubbleView(
     private var isCollapsed = false
     private var isDragging = false
     private var collapseJob: Job? = null
+    private var isBubbleOnLeft = true // Mặc định bubble ở bên trái
 
     // --- Touch Handling ---
     private var initialX = 0
@@ -134,34 +135,58 @@ class FloatingBubbleView(
         isPanelOpen = true
         cancelCollapseTimer()
 
+        // Ẩn bubble, hiện panel
+        TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
+        binding.bubbleView.visibility = View.GONE
+        binding.controlPanel.root.visibility = View.VISIBLE
+
+        val currentBubbleIsOnLeft = isBubbleOnLeft
+
         // Cập nhật layout params để panel có kích thước phù hợp
         layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
         layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
 
-        // Dòng code gây lỗi đã được xóa bỏ.
         // Giữ lại các cờ cần thiết ban đầu.
         layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
-        updateViewLayout()
-
-        // Đảm bảo panel nằm gọn trong màn hình sau khi được vẽ
-        post { adjustPanelPosition() }
+        updateViewLayout() // Áp dụng WRAP_CONTENT, cho phép panel được đo lường
 
         TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
         binding.bubbleView.visibility = View.GONE
         binding.controlPanel.root.visibility = View.VISIBLE
 
-        // ✨ Đoạn code xử lý chạm bên ngoài để đóng panel này rất hay, nên giữ lại ✨
-        binding.root.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                val panelRect = Rect()
-                binding.controlPanel.root.getGlobalVisibleRect(panelRect)
-                if (!panelRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
-                    listener?.onBubbleTapped()
-                    return@setOnTouchListener true
-                }
+        // Post để đảm bảo panel đã được đo lường và có width/height
+        post {
+            val panelWidth = binding.controlPanel.root.width
+            val panelHeight = binding.controlPanel.root.height
+
+            // Tính toán vị trí X mới dựa trên bên của bubble
+            layoutParams.x = if (currentBubbleIsOnLeft) {
+                0 // Căn chỉnh vào cạnh trái
+            } else {
+                screenWidth - panelWidth // Căn chỉnh vào cạnh phải
             }
-            false
+
+            // Tính toán vị trí Y mới để căn giữa theo chiều dọc
+            layoutParams.y = (screenHeight / 2) - (panelHeight / 2)
+
+            // Đảm bảo panel không bị tràn màn hình theo chiều dọc
+            layoutParams.y = Math.max(0, Math.min(layoutParams.y, screenHeight - panelHeight))
+
+            updateViewLayout() // Áp dụng vị trí mới
+
+            // ✨ Đoạn code xử lý chạm bên ngoài để đóng panel này rất hay, nên giữ lại ✨
+            binding.root.setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    val panelRect = Rect()
+                    binding.controlPanel.root.getGlobalVisibleRect(panelRect)
+                    if (!panelRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
+                        listener?.onBubbleTapped()
+                        return@setOnTouchListener true
+                    }
+                }
+                false
+            }
         }
     }
 
@@ -310,7 +335,13 @@ class FloatingBubbleView(
     }
 
     private fun snapToEdge() {
-        val endX = if (layoutParams.x + width / 2 < screenWidth / 2) 0 else screenWidth - width
+        val endX = if (layoutParams.x + width / 2 < screenWidth / 2) {
+            isBubbleOnLeft = true
+            0
+        } else {
+            isBubbleOnLeft = false
+            screenWidth - width
+        }
         ValueAnimator.ofInt(layoutParams.x, endX).apply {
             duration = SNAP_ANIMATION_DURATION
             interpolator = DecelerateInterpolator()
@@ -394,7 +425,7 @@ class FloatingBubbleView(
             binding.controlPanel.root.visibility = View.GONE
             binding.bubbleView.visibility = View.VISIBLE
             isPanelOpen = false
-            snapToEdge()
+            snapToEdge() // Đảm bảo bubble được snap và isBubbleOnLeft được thiết lập
         }
     }
 
@@ -410,10 +441,30 @@ class FloatingBubbleView(
             if (newConfig.orientation == Configuration.ORIENTATION_PORTRAIT) 2 else 3
 
         if (isPanelOpen) {
-            post { adjustPanelPosition() }
-        } else if (layoutParams.x > 0) { // Nếu không ở cạnh trái
-            layoutParams.x = screenWidth - width // Dịch chuyển về cạnh phải mới
-            updateViewLayout()
+            // Tính toán lại vị trí panel dựa trên kích thước màn hình mới
+            post {
+                val panelWidth = binding.controlPanel.root.width
+                val panelHeight = binding.controlPanel.root.height
+
+                // Định vị panel dựa trên bên mà bubble đã nằm
+                layoutParams.x = if (isBubbleOnLeft) {
+                    0 // Căn chỉnh vào cạnh trái
+                } else {
+                    screenWidth - panelWidth // Căn chỉnh vào cạnh phải
+                }
+
+                layoutParams.y = (screenHeight / 2) - (panelHeight / 2)
+                // Đảm bảo panel không bị tràn màn hình theo chiều dọc
+                layoutParams.y = Math.max(0, Math.min(layoutParams.y, screenHeight - panelHeight))
+                updateViewLayout()
+            }
+        } else { // Nếu panel không mở, đảm bảo bubble được snap vào cạnh đúng
+            // Nếu bubble ở bên phải, di chuyển nó đến cạnh phải mới
+            if (!isBubbleOnLeft) {
+                layoutParams.x = screenWidth - resources.getDimensionPixelSize(R.dimen.bubble_size)
+                updateViewLayout()
+            }
+            // Nếu nó ở bên trái (isBubbleOnLeft là true), layoutParams.x đã là 0, không cần thay đổi.
         }
     }
 
@@ -435,26 +486,5 @@ class FloatingBubbleView(
             screenWidth = size.x
             screenHeight = size.y
         }
-    }
-
-    private fun adjustPanelPosition() {
-        var needsUpdate = false
-        if (layoutParams.x + binding.controlPanel.root.width > screenWidth) {
-            layoutParams.x = screenWidth - binding.controlPanel.root.width
-            needsUpdate = true
-        }
-        if (layoutParams.y + binding.controlPanel.root.height > screenHeight) {
-            layoutParams.y = screenHeight - binding.controlPanel.root.height
-            needsUpdate = true
-        }
-        if (layoutParams.x < 0) {
-            layoutParams.x = 0
-            needsUpdate = true
-        }
-        if (layoutParams.y < 0) {
-            layoutParams.y = 0
-            needsUpdate = true
-        }
-        if (needsUpdate) updateViewLayout()
     }
 }
