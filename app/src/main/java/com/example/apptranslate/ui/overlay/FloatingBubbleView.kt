@@ -247,53 +247,65 @@ class FloatingBubbleView(
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTouchListener() {
+        // Sử dụng GestureDetector chỉ để phát hiện tap và long press
         val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-
-            override fun onDown(e: MotionEvent): Boolean {
-                initialX = layoutParams.x
-                initialY = layoutParams.y
-                expandBubble()
-                cancelCollapseTimer()
-                return true // Quan trọng: Phải trả về true để nhận các sự kiện sau
-            }
-
-            // Dùng onSingleTapConfirmed để chắc chắn đây là 1 cú chạm, không phải chạm-kéo
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                listener?.onBubbleTapped()
+                if (!isDragging) {
+                    listener?.onBubbleTapped()
+                }
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
-                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                listener?.onBubbleLongPressed()
-            }
-
-            // onScroll sẽ xử lý toàn bộ logic kéo thả
-            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-                // Lần onScroll đầu tiên, báo cho Service biết để vào chế độ kính lúp
-                if (e1 != null && e1.historySize == 0) {
-                    listener?.onDragStarted()
+                if (!isDragging) {
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    listener?.onBubbleLongPressed()
                 }
-
-                val totalDeltaX = e2.rawX - e1!!.rawX
-                val totalDeltaY = e2.rawY - e1!!.rawY
-                layoutParams.x = initialX + totalDeltaX.toInt()
-                layoutParams.y = initialY + totalDeltaY.toInt()
-                updateViewLayout()
-                return true
             }
         })
 
+        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
         binding.bubbleView.setOnTouchListener { _, event ->
-            // Chuyển toàn bộ sự kiện cho GestureDetector
-            val handledByDetector = gestureDetector.onTouchEvent(event)
+            gestureDetector.onTouchEvent(event)
 
-            // Khi người dùng nhấc tay, luôn gọi endDrag để xử lý logic kết thúc kéo
-            if (event.action == MotionEvent.ACTION_UP) {
-                endDrag()
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = layoutParams.x
+                    initialY = layoutParams.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+
+                    isDragging = false
+                    expandBubble()
+                    cancelCollapseTimer()
+                    return@setOnTouchListener true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = event.rawX - initialTouchX
+                    val deltaY = event.rawY - initialTouchY
+
+                    if (!isDragging && (abs(deltaX) > touchSlop || abs(deltaY) > touchSlop)) {
+                        isDragging = true
+                        listener?.onDragStarted()
+                    }
+
+                    if (isDragging) {
+                        layoutParams.x = (initialX + deltaX).toInt()
+                        layoutParams.y = (initialY + deltaY).toInt().coerceAtLeast(0)
+                        updateViewLayout()
+                    }
+                    return@setOnTouchListener true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isDragging) {
+                        endDrag()
+                    }
+                    isDragging = false
+                    return@setOnTouchListener true
+                }
             }
-
-            handledByDetector
+            return@setOnTouchListener false
         }
     }
 
