@@ -89,7 +89,8 @@ class OverlayService : Service(), BubbleViewListener {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var languageViewModel: LanguageViewModel
     private var languageSheetView: LanguageSheetView? = null
-    private var regionSelectOverlay: RegionSelectOverlay? = null
+    private var regionSelectOverlay: RegionSelectionOverlay? = null
+    private var regionResultOverlay: RegionResultOverlay? = null
 
     // Views và UI
     private var floatingBubbleView: FloatingBubbleView? = null
@@ -119,6 +120,7 @@ class OverlayService : Service(), BubbleViewListener {
         object GLOBAL_TRANSLATE_ACTIVE : ServiceState()
         object LANGUAGE_SELECT_OPEN : ServiceState()
         object REGION_SELECT_ACTIVE : ServiceState()
+        object REGION_RESULT_ACTIVE : ServiceState()
     }
     private var currentState: ServiceState = ServiceState.IDLE
 
@@ -222,6 +224,7 @@ class OverlayService : Service(), BubbleViewListener {
             is ServiceState.GLOBAL_TRANSLATE_ACTIVE -> removeGlobalOverlay()
             is ServiceState.LANGUAGE_SELECT_OPEN -> removeLanguageSheet()
             is ServiceState.REGION_SELECT_ACTIVE -> removeRegionSelectOverlay()
+            is ServiceState.REGION_RESULT_ACTIVE -> removeRegionResultOverlay()
 
             else -> {}
         }
@@ -233,8 +236,9 @@ class OverlayService : Service(), BubbleViewListener {
         floatingBubbleView?.visibility = when (newState) {
             // Ẩn bubble khi các giao diện toàn màn hình được hiển thị
             is ServiceState.GLOBAL_TRANSLATE_ACTIVE,
-            is ServiceState.LANGUAGE_SELECT_OPEN -> View.GONE,
-            is ServiceState.REGION_SELECT_ACTIVE -> View.GONE
+            is ServiceState.LANGUAGE_SELECT_OPEN -> View.GONE
+            is ServiceState.REGION_SELECT_ACTIVE,
+            is ServiceState.REGION_RESULT_ACTIVE -> View.GONE
             else -> View.VISIBLE
         }
 
@@ -255,6 +259,9 @@ class OverlayService : Service(), BubbleViewListener {
             }
             is ServiceState.REGION_SELECT_ACTIVE -> {
                 showRegionSelectOverlay()
+            }
+            is ServiceState.REGION_RESULT_ACTIVE -> {
+                // Trạng thái hiển thị kết quả vùng đã được xử lý
             }
             is ServiceState.LANGUAGE_SELECT_OPEN -> {
                 showLanguageSheet()
@@ -955,19 +962,46 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     private fun removeRegionSelectOverlay() {
-        regionSelectOverlay?.let {
-            if (it.isAttachedToWindow) {
-                windowManager.removeView(it)
+        regionSelectOverlay?.let { overlay: RegionSelectionOverlay ->
+            if (overlay.isAttachedToWindow) {
+                windowManager.removeView(overlay)
             }
         }
         regionSelectOverlay = null
     }
 
+    private fun showRegionResultOverlay(region: Rect): RegionResultOverlay? {
+        if (regionResultOverlay != null) return regionResultOverlay
+
+        regionResultOverlay = RegionResultOverlay(themedContext, region) {
+            setState(ServiceState.IDLE)
+        }
+
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            0 // Cho phép focus và touch
+        )
+        windowManager.addView(regionResultOverlay, params)
+        return regionResultOverlay
+    }
+
+    private fun removeRegionResultOverlay() {
+        regionResultOverlay?.let { overlay: RegionResultOverlay ->
+            if (overlay.isAttachedToWindow) {
+                windowManager.removeView(overlay)
+            }
+        }
+        regionResultOverlay = null
+    }
+
     private fun performRegionTranslation(region: Rect) = serviceScope.launch {
         removeRegionSelectOverlay()
 
-        val resultOverlay = showGlobalOverlay()
+        // Hiển thị overlay kết quả ngay lập tức để hiển thị loading
+        val resultOverlay = showRegionResultOverlay(region)
         resultOverlay?.showLoading()
+        setState(ServiceState.REGION_RESULT_ACTIVE)
 
         val screenBitmap = captureScreenWithBubbleHidden()
         if (screenBitmap == null) {
@@ -999,16 +1033,9 @@ class OverlayService : Service(), BubbleViewListener {
                 delay(1500)
                 setState(ServiceState.IDLE)
             } else {
-                results.forEach { block ->
-                    val originalBox = block.original.boundingBox!!
-                    val onScreenRect = Rect(
-                        region.left + originalBox.left,
-                        region.top + originalBox.top,
-                        region.left + originalBox.right,
-                        region.top + originalBox.bottom
-                    )
-                    displaySingleGlobalResult(onScreenRect, onScreenRect.top, block.translated, resultOverlay)
-                }
+                // Gộp tất cả kết quả dịch thành một chuỗi
+                val combinedResult = results.joinToString("\n") { it.translated }
+                resultOverlay?.updateResult(combinedResult)
             }
         }.onFailure { e ->
             resultOverlay?.hideLoading()

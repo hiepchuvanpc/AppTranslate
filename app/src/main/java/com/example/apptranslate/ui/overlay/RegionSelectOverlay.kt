@@ -35,14 +35,14 @@ class RegionSelectionOverlay(
     }
     private val backgroundPaint = Paint().apply {
         color = ContextCompat.getColor(context, R.color.black)
-        alpha = 128 // ~50% opacity
+        alpha = 20 // Giảm độ mờ để không ảnh hưởng OCR
     }
 
     private var startPoint: PointF? = null
     private val selectionRect = Rect()
 
     init {
-        binding = OverlayRegionSelectionBinding.inflate(LayoutInflater.from(context), this, true)
+        binding = OverlayRegionSelectionBinding.inflate(LayoutInflater.from(context), this)
         setWillNotDraw(false) // Cần thiết để onDraw được gọi
         isFocusableInTouchMode = true
         requestFocus()
@@ -92,16 +92,9 @@ class RegionSelectionOverlay(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        // Vẽ một lớp nền mờ
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
 
         if (!selectionRect.isEmpty) {
-            // "Cắt" một lỗ trong suốt tại vùng chọn
-            canvas.save()
-            canvas.clipRect(selectionRect, android.graphics.Region.Op.DIFFERENCE)
-            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
-            canvas.restore()
-            // Vẽ đường viền đứt nét xung quanh vùng chọn
+            // Chỉ vẽ đường viền, không vẽ nền mờ khi đang chọn
             canvas.drawRect(selectionRect, selectionPaint)
         }
     }

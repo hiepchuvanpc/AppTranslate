@@ -36,6 +36,11 @@ class TranslationResultView(context: Context) : FrameLayout(context) {
         binding.loadingIndicator.isVisible = true
     }
 
+    fun hideLoading() {
+        binding.loadingIndicator.isVisible = false
+        binding.tvTranslatedText.isVisible = true
+    }
+
     fun updateText(text: String) {
         binding.loadingIndicator.isVisible = false
         binding.tvTranslatedText.isVisible = true
