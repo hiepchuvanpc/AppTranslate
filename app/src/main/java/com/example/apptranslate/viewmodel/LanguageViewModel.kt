@@ -22,16 +22,15 @@ class LanguageViewModel(application: Application) : AndroidViewModel(application
     private val _targetLanguage = MutableLiveData<Language>()
     val targetLanguage: LiveData<Language> = _targetLanguage
 
-    // ✨ LiveData giờ đây sẽ được cập nhật từ logic mới ✨
     private val _recentSourceLanguages = MutableLiveData<List<Language>>()
     val recentSourceLanguages: LiveData<List<Language>> = _recentSourceLanguages
 
     private val _recentTargetLanguages = MutableLiveData<List<Language>>()
     val recentTargetLanguages: LiveData<List<Language>> = _recentTargetLanguages
 
-    // ... (các LiveData khác giữ nguyên)
     private val _translationSource = MutableLiveData<TranslationSource>()
     val translationSource: LiveData<TranslationSource> = _translationSource
+
     private val _translationMode = MutableLiveData<TranslationMode>()
     val translationMode: LiveData<TranslationMode> = _translationMode
 
@@ -39,18 +38,19 @@ class LanguageViewModel(application: Application) : AndroidViewModel(application
         loadSettings()
     }
 
-    private fun loadSettings() {
-        // Tải ngôn ngữ được chọn
+    /**
+     * SỬA LỖI: Chỉ có MỘT hàm loadSettings, và nó là public.
+     * Tải tất cả cài đặt từ SharedPreferences và cập nhật LiveData.
+     */
+    fun loadSettings() {
         val savedSourceCode = settingsManager.getSourceLanguageCode()
         val savedTargetCode = settingsManager.getTargetLanguageCode()
         _sourceLanguage.value = allLanguages.find { it.code == savedSourceCode } ?: allLanguages.find { it.code == "vi" }!!
         _targetLanguage.value = allLanguages.find { it.code == savedTargetCode } ?: allLanguages.find { it.code == "en" }!!
 
-        // Tải các cài đặt khác
         _translationSource.value = settingsManager.getTranslationSource()
         _translationMode.value = settingsManager.getTranslationMode()
 
-        // ✨ Tải và cập nhật danh sách ngôn ngữ gần đây ✨
         _recentSourceLanguages.value = settingsManager.getRecentSourceLanguageCodes()
             .mapNotNull { code -> allLanguages.find { it.code == code } }
         _recentTargetLanguages.value = settingsManager.getRecentTargetLanguageCodes()
@@ -58,31 +58,41 @@ class LanguageViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSourceLanguage(language: Language) {
-        if (_targetLanguage.value?.code == language.code) {
-            _targetLanguage.value = _sourceLanguage.value
-        }
-        _sourceLanguage.value = language
-        settingsManager.saveSourceLanguageCode(language.code)
+        val currentSource = _sourceLanguage.value
+        val currentTarget = _targetLanguage.value
 
-        // ✨ Cập nhật và lưu danh sách ngôn ngữ nguồn gần đây ✨
+        if (currentTarget?.code == language.code && currentSource != null) {
+            // Logic hoán đổi
+            _sourceLanguage.value = currentTarget
+            _targetLanguage.value = currentSource
+            settingsManager.saveSourceLanguageCode(currentTarget.code)
+            settingsManager.saveTargetLanguageCode(currentSource.code)
+        } else {
+            // Logic đặt bình thường
+            _sourceLanguage.value = language
+            settingsManager.saveSourceLanguageCode(language.code)
+        }
         updateRecentLanguages(language, isSource = true)
     }
 
     fun setTargetLanguage(language: Language) {
-        if (_sourceLanguage.value?.code == language.code) {
-            _sourceLanguage.value = _targetLanguage.value
-        }
-        _targetLanguage.value = language
-        settingsManager.saveTargetLanguageCode(language.code)
+        val currentSource = _sourceLanguage.value
+        val currentTarget = _targetLanguage.value
 
-        // ✨ Cập nhật và lưu danh sách ngôn ngữ đích gần đây ✨
+        if (currentSource?.code == language.code && currentTarget != null) {
+            // Logic hoán đổi
+            _sourceLanguage.value = currentTarget
+            _targetLanguage.value = currentSource
+            settingsManager.saveSourceLanguageCode(currentTarget.code)
+            settingsManager.saveTargetLanguageCode(currentSource.code)
+        } else {
+            // Logic đặt bình thường
+            _targetLanguage.value = language
+            settingsManager.saveTargetLanguageCode(language.code)
+        }
         updateRecentLanguages(language, isSource = false)
     }
 
-    /**
-     * ✨ HÀM MỚI: Cập nhật danh sách ngôn ngữ gần đây ✨
-     * Đưa ngôn ngữ vừa chọn lên đầu, giữ danh sách có 3 mục và loại bỏ trùng lặp.
-     */
     private fun updateRecentLanguages(newLanguage: Language, isSource: Boolean) {
         if (isSource) {
             val currentList = _recentSourceLanguages.value?.toMutableList() ?: mutableListOf()
@@ -101,7 +111,6 @@ class LanguageViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ... (các hàm swapLanguages, setTranslationSource, setTranslationMode, getAllLanguages, searchLanguages giữ nguyên)
     fun swapLanguages() {
         val currentSource = _sourceLanguage.value
         val currentTarget = _targetLanguage.value

@@ -41,6 +41,7 @@ interface BubbleViewListener {
     fun onLanguageSelectClicked()
     fun onHomeClicked()
     fun onMoveClicked()
+    fun onRegionTranslateClicked()
 }
 
 /**
@@ -87,6 +88,7 @@ class FloatingBubbleView(
     private var isDragging = false
     private var collapseJob: Job? = null
     private var isBubbleOnLeft = true // Mặc định bubble ở bên trái
+    private var lastBubbleY = 0
 
     // --- Touch Handling ---
     private var initialX = 0
@@ -129,39 +131,43 @@ class FloatingBubbleView(
         isPanelOpen = true
         cancelCollapseTimer()
 
-        // Cập nhật layout params để panel có kích thước phù hợp
-        layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
-        layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
-        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL // Đảm bảo flag này tồn tại
+        // Lưu lại vị trí Y của bubble
+        lastBubbleY = layoutParams.y
 
-        // Áp dụng WRAP_CONTENT, cho phép panel được đo lường
-        // Việc này sẽ làm view vẽ lại một lần
-        updateViewLayout()
-
-        // Dùng post để chạy sau khi view đã được đo xong
-        post {
-            // Bắt đầu animation và thay đổi visibility
-            TransitionManager.beginDelayedTransition(this@FloatingBubbleView)
+        // Step 1: Ẩn bubble đi một cách mượt mà
+        binding.bubbleView.animate().alpha(0f).setDuration(150).withEndAction {
             binding.bubbleView.visibility = View.GONE
-            binding.controlPanel.root.visibility = View.VISIBLE
 
-            val panelWidth = binding.controlPanel.root.width
-            val panelHeight = binding.controlPanel.root.height
-
-            // Tính toán vị trí X mới dựa trên bên của bubble
-            layoutParams.x = if (isBubbleOnLeft) 0 else screenWidth - panelWidth
-            // Tính toán vị trí Y mới để căn giữa
-            layoutParams.y = (screenHeight / 2) - (panelHeight / 2)
-            // Đảm bảo không tràn màn hình
-            layoutParams.y = layoutParams.y.coerceIn(0, screenHeight - panelHeight)
-
-            // Cập nhật layout lần cuối với vị trí chính xác
+            // Step 2: Cấu hình lại LayoutParams cho panel
+            layoutParams.apply {
+                // Thay đổi trọng lực để căn giữa theo chiều dọc và bám vào cạnh
+                gravity = Gravity.CENTER_VERTICAL or if (isBubbleOnLeft) Gravity.LEFT else Gravity.RIGHT
+                // Reset x, y vì gravity sẽ lo việc định vị
+                x = 0
+                y = 0
+                width = WindowManager.LayoutParams.WRAP_CONTENT
+                height = WindowManager.LayoutParams.WRAP_CONTENT
+            }
+            // Bỏ cờ NOT_TOUCH_MODAL để bắt sự kiện chạm bên ngoài
+            layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
             updateViewLayout()
 
-            // Listener để đóng panel khi chạm ra ngoài
-            // (Logic này đã tốt, giữ nguyên)
-        }
+            // Step 3: Hiển thị panel một cách mượt mà
+            binding.controlPanel.root.alpha = 0f
+            binding.controlPanel.root.visibility = View.VISIBLE
+            binding.controlPanel.root.animate().alpha(1f).setDuration(150).start()
+
+            // Gán listener để đóng panel khi chạm ra ngoài
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    listener?.onMoveClicked() // onMoveClicked sẽ trigger đóng panel
+                    true
+                } else {
+                    false
+                }
+            }
+        }.start()
     }
 
     /**
@@ -171,14 +177,39 @@ class FloatingBubbleView(
         if (!isPanelOpen) return
         isPanelOpen = false
 
-        // Dọn dẹp listener để tránh rò rỉ và xung đột
-        binding.root.setOnTouchListener(null)
+        // Gỡ bỏ listener chạm bên ngoài
+        setOnTouchListener(null)
 
-        TransitionManager.beginDelayedTransition(binding.root as ViewGroup)
-        binding.controlPanel.root.visibility = View.GONE
-        binding.bubbleView.visibility = View.VISIBLE
+        // Step 1: Ẩn panel đi một cách mượt mà
+        binding.controlPanel.root.animate().alpha(0f).setDuration(150).withEndAction {
+            binding.controlPanel.root.visibility = View.GONE
 
-        snapToEdge()
+            // Step 2: Cấu hình lại LayoutParams cho bubble
+            layoutParams.apply {
+                // Trả lại trọng lực mặc định
+                gravity = Gravity.TOP or Gravity.START
+                // Phục hồi lại vị trí x, y của bubble
+                x = if (isBubbleOnLeft) 0 else screenWidth - binding.bubbleView.width
+                y = lastBubbleY
+                width = resources.getDimensionPixelSize(R.dimen.bubble_size)
+                height = resources.getDimensionPixelSize(R.dimen.bubble_size)
+            }
+            // Trả lại cờ để cho phép chạm xuyên qua
+            layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            updateViewLayout()
+
+            // Step 3: Hiển thị bubble một cách mượt mà
+            binding.bubbleView.alpha = 0f
+            binding.bubbleView.visibility = View.VISIBLE
+            binding.bubbleView.animate().alpha(1f).setDuration(150).withEndAction {
+                // Bắt đầu hẹn giờ tự thu gọn sau khi bubble hiện lại
+                startCollapseTimer()
+            }.start()
+
+        }.start()
     }
 
     fun updateBubbleAppearance(appearance: BubbleAppearance) {
@@ -385,7 +416,7 @@ class FloatingBubbleView(
     private fun createFunctionItems(): List<FunctionItem> {
         return listOf(
             FunctionItem("GLOBAL", R.drawable.ic_global, context.getString(R.string.function_global_translate)),
-            FunctionItem("AREA", R.drawable.ic_crop, context.getString(R.string.function_area_translate)),
+            FunctionItem("AREA", R.drawable.ic_crop, context.getString(R.string.function_area_translate),isClickable = true),
             FunctionItem("IMAGE", R.drawable.ic_image, context.getString(R.string.function_image_translate)),
             FunctionItem("COPY", R.drawable.ic_copy, context.getString(R.string.function_copy_text)),
             FunctionItem("AUTO_GLOBAL", R.drawable.ic_auto_play, context.getString(R.string.function_auto_global_translate)),

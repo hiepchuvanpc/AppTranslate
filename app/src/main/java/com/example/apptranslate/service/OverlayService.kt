@@ -2,6 +2,7 @@
 
 package com.example.apptranslate.service
 
+import com.example.apptranslate.MainActivity
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Notification
@@ -39,11 +40,14 @@ import com.example.apptranslate.data.TranslationManager
 import com.example.apptranslate.ocr.OcrManager
 import com.example.apptranslate.ocr.OcrResult
 import com.example.apptranslate.ui.overlay.*
+
 import kotlinx.coroutines.*
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.roundToInt
 import androidx.core.view.doOnLayout
+import com.example.apptranslate.viewmodel.LanguageViewModel
+import com.example.apptranslate.viewmodel.LanguageViewModelFactory
 
 @SuppressLint("ViewConstructor")
 class OverlayService : Service(), BubbleViewListener {
@@ -66,6 +70,7 @@ class OverlayService : Service(), BubbleViewListener {
         const val BROADCAST_SERVICE_ERROR = "com.example.apptranslate.SERVICE_ERROR"
         const val ACTION_SHOW_LANGUAGE_SHEET = "com.example.apptranslate.SHOW_LANGUAGE_SHEET"
         const val ACTION_UPDATE_LANGUAGES = "com.example.apptranslate.UPDATE_LANGUAGES"
+        const val ACTION_LANGUAGES_UPDATED_FROM_SERVICE = "com.example.apptranslate.LANGUAGES_UPDATED"
         const val EXTRA_SOURCE_LANG = "SOURCE_LANG"
         const val EXTRA_TARGET_LANG = "TARGET_LANG"
 
@@ -82,6 +87,9 @@ class OverlayService : Service(), BubbleViewListener {
     private var mediaProjection: MediaProjection? = null
     private var imageReader: ImageReader? = null
     private val handler = Handler(Looper.getMainLooper())
+    private lateinit var languageViewModel: LanguageViewModel
+    private var languageSheetView: LanguageSheetView? = null
+    private var regionSelectOverlay: RegionSelectOverlay? = null
 
     // Views và UI
     private var floatingBubbleView: FloatingBubbleView? = null
@@ -98,13 +106,19 @@ class OverlayService : Service(), BubbleViewListener {
     private var lastCapturedBitmapHeight: Int = 0
 
     private val LENS_SIZE by lazy { resources.getDimensionPixelSize(R.dimen.magnifier_lens_size) }
+    private val themedContext: Context by lazy {
+        ContextThemeWrapper(this, R.style.Theme_AppTranslate)
+    }
 
     // Quản lý trạng thái
     private sealed class ServiceState {
         object IDLE : ServiceState()
+        object MOVING_BUBBLE : ServiceState()
         object PANEL_OPEN : ServiceState()
         object MAGNIFIER_ACTIVE : ServiceState()
         object GLOBAL_TRANSLATE_ACTIVE : ServiceState()
+        object LANGUAGE_SELECT_OPEN : ServiceState()
+        object REGION_SELECT_ACTIVE : ServiceState()
     }
     private var currentState: ServiceState = ServiceState.IDLE
 
@@ -119,6 +133,7 @@ class OverlayService : Service(), BubbleViewListener {
         translationManager = TranslationManager(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createBasicNotification("Dịch vụ đang chạy"))
+        languageViewModel = LanguageViewModelFactory(application).create(LanguageViewModel::class.java)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -158,27 +173,28 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onDragFinished() {
-        if (currentState is ServiceState.MAGNIFIER_ACTIVE) {
+        if (currentState is ServiceState.MAGNIFIER_ACTIVE || currentState is ServiceState.MOVING_BUBBLE) {
             setState(ServiceState.IDLE)
         }
     }
 
+    override fun onRegionTranslateClicked() {
+        setState(ServiceState.REGION_SELECT_ACTIVE)
+    }
+
     override fun onFunctionClicked(functionId: String) {
-        if (functionId == "GLOBAL") {
-            setState(ServiceState.GLOBAL_TRANSLATE_ACTIVE)
-        } else {
-            setState(ServiceState.IDLE)
-            Toast.makeText(this, "Chức năng '$functionId' chưa được triển khai", Toast.LENGTH_SHORT).show()
+        when (functionId) {
+            "GLOBAL" -> setState(ServiceState.GLOBAL_TRANSLATE_ACTIVE)
+            "AREA" -> setState(ServiceState.REGION_SELECT_ACTIVE) // <-- Xử lý chức năng mới
+            else -> {
+                setState(ServiceState.IDLE)
+                Toast.makeText(this, "Chức năng '$functionId' chưa được triển khai", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     override fun onLanguageSelectClicked() {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-            action = ACTION_SHOW_LANGUAGE_SHEET
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        startActivity(intent)
-        setState(ServiceState.IDLE)
+        setState(ServiceState.LANGUAGE_SELECT_OPEN)
     }
 
     override fun onHomeClicked() {
@@ -190,52 +206,101 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onMoveClicked() {
-        setState(ServiceState.IDLE)
+        setState(ServiceState.MOVING_BUBBLE)
     }
     //endregion
 
     //region Quản lý Trạng thái (State Machine)
     private fun setState(newState: ServiceState) {
         if (currentState::class == newState::class) return
-        Log.d(TAG, "State changing from ${currentState::class.simpleName} to ${newState::class.simpleName}")
+        Log.d(TAG, "State changing from ${currentState.javaClass.simpleName} to ${newState.javaClass.simpleName}")
 
-        // --- Thoát khỏi trạng thái hiện tại ---
+        // --- Bước 1: Dọn dẹp trạng thái HIỆN TẠI ---
         when (currentState) {
+            is ServiceState.PANEL_OPEN -> floatingBubbleView?.closePanel()
             is ServiceState.MAGNIFIER_ACTIVE -> stopMagnifierMode()
             is ServiceState.GLOBAL_TRANSLATE_ACTIVE -> removeGlobalOverlay()
-            is ServiceState.IDLE -> {}
-            is ServiceState.PANEL_OPEN -> {}
+            is ServiceState.LANGUAGE_SELECT_OPEN -> removeLanguageSheet()
+            is ServiceState.REGION_SELECT_ACTIVE -> removeRegionSelectOverlay()
+
+            else -> {}
         }
 
         currentState = newState
 
-        // --- Vào trạng thái mới ---
+        // --- Bước 2: Thiết lập cho trạng thái MỚI ---
+        // Ẩn/hiện bubble một cách nhất quán
+        floatingBubbleView?.visibility = when (newState) {
+            // Ẩn bubble khi các giao diện toàn màn hình được hiển thị
+            is ServiceState.GLOBAL_TRANSLATE_ACTIVE,
+            is ServiceState.LANGUAGE_SELECT_OPEN -> View.GONE,
+            is ServiceState.REGION_SELECT_ACTIVE -> View.GONE
+            else -> View.VISIBLE
+        }
+
+        // Kích hoạt logic cho trạng thái mới
         when (newState) {
             is ServiceState.IDLE -> {
-                floatingBubbleView?.apply {
-                    closePanel()
-                    updateBubbleAppearance(BubbleAppearance.NORMAL)
-                    visibility = View.VISIBLE
-                    alpha = 1.0f
-                }
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.NORMAL)
             }
             is ServiceState.PANEL_OPEN -> {
                 floatingBubbleView?.openPanel()
             }
             is ServiceState.MAGNIFIER_ACTIVE -> {
-                floatingBubbleView?.apply {
-                    closePanel()
-                    updateBubbleAppearance(BubbleAppearance.MAGNIFIER)
-                }
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MAGNIFIER)
                 startMagnifierMode()
             }
             is ServiceState.GLOBAL_TRANSLATE_ACTIVE -> {
-                floatingBubbleView?.closePanel()
                 performGlobalTranslate()
+            }
+            is ServiceState.REGION_SELECT_ACTIVE -> {
+                showRegionSelectOverlay()
+            }
+            is ServiceState.LANGUAGE_SELECT_OPEN -> {
+                showLanguageSheet()
+            }
+            is ServiceState.MOVING_BUBBLE -> {
+                floatingBubbleView?.updateBubbleAppearance(BubbleAppearance.MOVING)
+                Toast.makeText(this, "Kéo thả để di chuyển", Toast.LENGTH_SHORT).show()
             }
         }
     }
     //endregion
+
+    private fun showLanguageSheet() {
+        if (languageSheetView != null) return
+
+        // DÙNG themedContext ở đây
+        languageSheetView = LanguageSheetView(themedContext, languageViewModel) { languageChanged ->
+            setState(ServiceState.IDLE)
+            // Nếu ngôn ngữ thực sự thay đổi, gửi broadcast
+            if (languageChanged) {
+                sendBroadcast(Intent(ACTION_LANGUAGES_UPDATED_FROM_SERVICE))
+                Log.d(TAG, "Sent language update broadcast to the app.")
+            }
+        }
+
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        ).apply {
+            dimAmount = 0.5f
+            flags = flags or WindowManager.LayoutParams.FLAG_DIM_BEHIND
+            flags = flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        }
+
+        windowManager.addView(languageSheetView, params)
+    }
+
+    private fun removeLanguageSheet() {
+        languageSheetView?.let {
+            if (it.isAttachedToWindow) {
+                windowManager.removeView(it)
+            }
+        }
+        languageSheetView = null
+    }
 
     //region Logic chung cho OCR và Dịch thuật
     private suspend fun performOcrAndTranslation(bitmap: Bitmap): Result<List<TranslatedBlock>> = runCatching {
@@ -669,7 +734,8 @@ class OverlayService : Service(), BubbleViewListener {
 
     private fun showFloatingBubble() {
         if (floatingBubbleView != null) return
-        val themedContext = ContextThemeWrapper(this, R.style.Theme_AppTranslate_NoActionBar)
+
+        // DÙNG themedContext ở đây
         floatingBubbleView = FloatingBubbleView(themedContext, serviceScope).apply {
             listener = this@OverlayService
         }
@@ -684,7 +750,7 @@ class OverlayService : Service(), BubbleViewListener {
             WindowManager.LayoutParams.WRAP_CONTENT,
             flags
         ).apply {
-            y = 200 // Dễ lấy hơn, tránh status bar
+            y = 200
         }
         floatingBubbleView?.setViewLayoutParams(params)
         try {
@@ -693,19 +759,20 @@ class OverlayService : Service(), BubbleViewListener {
             Log.e(TAG, "Failed to add bubble view", e)
         }
 
-        // GỌI HÀM SETUP KÍNH LÚP TẠI ĐÂY
         setupMagnifierLens()
     }
 
     private fun showGlobalOverlay(): GlobalTranslationOverlay? {
         if (globalOverlay != null) return globalOverlay
-        globalOverlay = GlobalTranslationOverlay(this, windowManager).apply {
+
+        // DÙNG themedContext ở đây
+        globalOverlay = GlobalTranslationOverlay(themedContext, windowManager).apply {
             onDismiss = {
                 globalOverlay = null
                 setState(ServiceState.IDLE)
             }
         }
-        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        val flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         val params = createOverlayLayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -863,5 +930,92 @@ class OverlayService : Service(), BubbleViewListener {
         }
         // Giá trị dự phòng nếu không tìm thấy resource
         return (24 * resources.displayMetrics.density).toInt()
+    }
+
+    private fun showRegionSelectOverlay() {
+        if (regionSelectOverlay != null) return
+
+        regionSelectOverlay = RegionSelectionOverlay(themedContext,
+            onRegionSelected = { rect ->
+                // Người dùng đã chọn xong, tiến hành dịch
+                performRegionTranslation(rect)
+            },
+            onDismiss = {
+                // Người dùng hủy
+                setState(ServiceState.IDLE)
+            }
+        )
+
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            0 // Không cần flag đặc biệt, cho phép focus và touch
+        )
+        windowManager.addView(regionSelectOverlay, params)
+    }
+
+    private fun removeRegionSelectOverlay() {
+        regionSelectOverlay?.let {
+            if (it.isAttachedToWindow) {
+                windowManager.removeView(it)
+            }
+        }
+        regionSelectOverlay = null
+    }
+
+    private fun performRegionTranslation(region: Rect) = serviceScope.launch {
+        removeRegionSelectOverlay()
+
+        val resultOverlay = showGlobalOverlay()
+        resultOverlay?.showLoading()
+
+        val screenBitmap = captureScreenWithBubbleHidden()
+        if (screenBitmap == null) {
+            Toast.makeText(this@OverlayService, "Không thể chụp màn hình", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+
+        val croppedBitmap = try {
+            // Đảm bảo vùng cắt nằm trong giới hạn của bitmap
+            val validRegion = Rect(region)
+            if (!validRegion.intersect(0, 0, screenBitmap.width, screenBitmap.height)) {
+                throw IllegalArgumentException("Vùng chọn nằm ngoài màn hình.")
+            }
+            Bitmap.createBitmap(screenBitmap, validRegion.left, validRegion.top, validRegion.width(), validRegion.height())
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi khi cắt ảnh", e)
+            Toast.makeText(this@OverlayService, "Lỗi: Vùng chọn không hợp lệ.", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+            screenBitmap.recycle()
+            return@launch
+        }
+        screenBitmap.recycle()
+
+        performOcrAndTranslation(croppedBitmap).onSuccess { results ->
+            resultOverlay?.hideLoading()
+            if (results.isEmpty()) {
+                Toast.makeText(this@OverlayService, "Không tìm thấy văn bản", Toast.LENGTH_SHORT).show()
+                delay(1500)
+                setState(ServiceState.IDLE)
+            } else {
+                results.forEach { block ->
+                    val originalBox = block.original.boundingBox!!
+                    val onScreenRect = Rect(
+                        region.left + originalBox.left,
+                        region.top + originalBox.top,
+                        region.left + originalBox.right,
+                        region.top + originalBox.bottom
+                    )
+                    displaySingleGlobalResult(onScreenRect, onScreenRect.top, block.translated, resultOverlay)
+                }
+            }
+        }.onFailure { e ->
+            resultOverlay?.hideLoading()
+            Log.e(TAG, "Lỗi khi dịch vùng", e)
+            Toast.makeText(this@OverlayService, "Lỗi: ${e.message}", Toast.LENGTH_LONG).show()
+            setState(ServiceState.IDLE)
+        }
+        croppedBitmap.recycle()
     }
 }

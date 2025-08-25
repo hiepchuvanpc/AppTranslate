@@ -4,7 +4,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Background overlay -->
     <View
         android:id="@+id/backgroundOverlay"
         android:layout_width="match_parent"
@@ -13,7 +12,6 @@
         android:clickable="true"
         android:focusable="true" />
 
-    <!-- Bottom sheet content -->
     <LinearLayout
         android:id="@+id/contentContainer"
         android:layout_width="match_parent"
@@ -23,7 +21,6 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Handle -->
         <View
             android:layout_width="40dp"
             android:layout_height="4dp"
@@ -31,7 +28,6 @@
             android:layout_marginBottom="16dp"
             android:background="@drawable/bottom_sheet_handle" />
 
-        <!-- Title -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -42,7 +38,6 @@
             android:textSize="20sp"
             android:textStyle="bold" />
 
-        <!-- Language selection buttons -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -51,7 +46,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/buttonSelectSource"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="8dp"
@@ -61,7 +56,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/buttonSelectTarget"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
@@ -71,9 +66,8 @@
 
         </LinearLayout>
 
-        <!-- Search box -->
         <com.google.android.material.textfield.TextInputLayout
-            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
@@ -89,7 +83,6 @@
 
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Languages RecyclerView -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="300dp"
