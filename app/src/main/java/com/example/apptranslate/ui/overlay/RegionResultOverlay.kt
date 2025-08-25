@@ -5,15 +5,11 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
-import android.view.Gravity
 import android.view.KeyEvent
-import android.view.LayoutInflater
 import android.view.MotionEvent
-import android.view.View
 import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
 import com.example.apptranslate.R
-import com.example.apptranslate.databinding.OverlayRegionResultBinding
 
 @SuppressLint("ViewConstructor")
 class RegionResultOverlay(
@@ -22,46 +18,58 @@ class RegionResultOverlay(
     val onDismiss: () -> Unit
 ) : FrameLayout(context) {
 
-    private val binding: OverlayRegionResultBinding
     private val backgroundPaint = Paint().apply {
         color = ContextCompat.getColor(context, R.color.black)
-        alpha = 128 // Nền mờ chỉ hiển thị sau khi OCR
+        alpha = 128 // Nền mờ chỉ hiển thị trong vùng chọn
     }
 
-    private val resultView: TranslationResultView
+    private val resultViews = mutableListOf<TranslationResultView>()
+    private var loadingView: TranslationResultView? = null
 
     init {
-        binding = OverlayRegionResultBinding.inflate(LayoutInflater.from(context), this)
         setWillNotDraw(false)
         isFocusableInTouchMode = true
         requestFocus()
 
-        // Tạo TranslationResultView để hiển thị kết quả
-        resultView = TranslationResultView(context)
-        
-        // Thêm resultView vào vị trí được chọn
-        val params = LayoutParams(
+        // Tạo view loading ban đầu
+        loadingView = TranslationResultView(context)
+        val loadingParams = LayoutParams(
             selectedRegion.width(),
             selectedRegion.height()
         ).apply {
             leftMargin = selectedRegion.left
             topMargin = selectedRegion.top
         }
-        addView(resultView, params)
-
-        binding.buttonClose.setOnClickListener { onDismiss() }
+        addView(loadingView, loadingParams)
     }
 
-    fun updateResult(translatedText: String) {
-        resultView.updateText(translatedText)
+    fun addTranslationResult(position: Rect, translatedText: String) {
+        val resultView = TranslationResultView(context).apply {
+            updateText(translatedText)
+        }
+        
+        val paddingPx = (2f * context.resources.displayMetrics.density).toInt()
+        val params = LayoutParams(
+            position.width() + (paddingPx * 2),
+            position.height() + (paddingPx * 2)
+        ).apply {
+            leftMargin = position.left - paddingPx
+            topMargin = position.top - paddingPx
+        }
+        
+        addView(resultView, params)
+        resultViews.add(resultView)
     }
 
     fun showLoading() {
-        resultView.showLoading()
+        loadingView?.showLoading()
     }
 
     fun hideLoading() {
-        resultView.hideLoading()
+        loadingView?.let {
+            removeView(it)
+            loadingView = null
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -83,13 +91,11 @@ class RegionResultOverlay(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        // Vẽ nền mờ toàn màn hình
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
         
-        // Tạo một vùng trong suốt tại vị trí kết quả
+        // Chỉ vẽ nền mờ trong vùng được chọn
         canvas.save()
-        canvas.clipRect(selectedRegion, android.graphics.Region.Op.DIFFERENCE)
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
+        canvas.clipRect(selectedRegion)
+        canvas.drawRect(selectedRegion, backgroundPaint)
         canvas.restore()
     }
 

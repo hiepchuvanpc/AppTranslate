@@ -7,7 +7,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
-import android.graphics.PointF // Sửa lỗi: Dùng PointF của Android
+import android.graphics.PointF
 import android.graphics.Rect
 import android.view.Gravity
 import android.view.KeyEvent

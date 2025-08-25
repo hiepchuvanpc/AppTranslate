@@ -187,7 +187,7 @@ class OverlayService : Service(), BubbleViewListener {
     override fun onFunctionClicked(functionId: String) {
         when (functionId) {
             "GLOBAL" -> setState(ServiceState.GLOBAL_TRANSLATE_ACTIVE)
-            "AREA" -> setState(ServiceState.REGION_SELECT_ACTIVE) // <-- Xử lý chức năng mới
+            "AREA" -> setState(ServiceState.REGION_SELECT_ACTIVE)
             else -> {
                 setState(ServiceState.IDLE)
                 Toast.makeText(this, "Chức năng '$functionId' chưa được triển khai", Toast.LENGTH_SHORT).show()
@@ -210,6 +210,15 @@ class OverlayService : Service(), BubbleViewListener {
     override fun onMoveClicked() {
         setState(ServiceState.MOVING_BUBBLE)
     }
+
+    override fun onDrag(x: Int, y: Int) {
+        // Chỉ cập nhật kính lúp khi đang ở chế độ Magnifier
+        if (currentState is ServiceState.MAGNIFIER_ACTIVE) {
+            val lensDetails = calculateLensDetails(x, y)
+            updateMagnifierLensPosition(lensDetails)
+            findAndShowMagnifierResultAt(lensDetails.scanCenter)
+        }
+    }
     //endregion
 
     //region Quản lý Trạng thái (State Machine)
@@ -217,7 +226,7 @@ class OverlayService : Service(), BubbleViewListener {
         if (currentState::class == newState::class) return
         Log.d(TAG, "State changing from ${currentState.javaClass.simpleName} to ${newState.javaClass.simpleName}")
 
-        // --- Bước 1: Dọn dẹp trạng thái HIỆN TẠI ---
+        // Bước 1: Dọn dẹp trạng thái hiện tại
         when (currentState) {
             is ServiceState.PANEL_OPEN -> floatingBubbleView?.closePanel()
             is ServiceState.MAGNIFIER_ACTIVE -> stopMagnifierMode()
@@ -225,18 +234,16 @@ class OverlayService : Service(), BubbleViewListener {
             is ServiceState.LANGUAGE_SELECT_OPEN -> removeLanguageSheet()
             is ServiceState.REGION_SELECT_ACTIVE -> removeRegionSelectOverlay()
             is ServiceState.REGION_RESULT_ACTIVE -> removeRegionResultOverlay()
-
             else -> {}
         }
 
         currentState = newState
 
-        // --- Bước 2: Thiết lập cho trạng thái MỚI ---
+        // Bước 2: Thiết lập cho trạng thái mới
         // Ẩn/hiện bubble một cách nhất quán
         floatingBubbleView?.visibility = when (newState) {
-            // Ẩn bubble khi các giao diện toàn màn hình được hiển thị
             is ServiceState.GLOBAL_TRANSLATE_ACTIVE,
-            is ServiceState.LANGUAGE_SELECT_OPEN -> View.GONE
+            is ServiceState.LANGUAGE_SELECT_OPEN,
             is ServiceState.REGION_SELECT_ACTIVE,
             is ServiceState.REGION_RESULT_ACTIVE -> View.GONE
             else -> View.VISIBLE
@@ -274,13 +281,12 @@ class OverlayService : Service(), BubbleViewListener {
     }
     //endregion
 
+    //region Language Sheet Management
     private fun showLanguageSheet() {
         if (languageSheetView != null) return
 
-        // DÙNG themedContext ở đây
         languageSheetView = LanguageSheetView(themedContext, languageViewModel) { languageChanged ->
             setState(ServiceState.IDLE)
-            // Nếu ngôn ngữ thực sự thay đổi, gửi broadcast
             if (languageChanged) {
                 sendBroadcast(Intent(ACTION_LANGUAGES_UPDATED_FROM_SERVICE))
                 Log.d(TAG, "Sent language update broadcast to the app.")
@@ -308,6 +314,7 @@ class OverlayService : Service(), BubbleViewListener {
         }
         languageSheetView = null
     }
+    //endregion
 
     //region Logic chung cho OCR và Dịch thuật
     private suspend fun performOcrAndTranslation(bitmap: Bitmap): Result<List<TranslatedBlock>> = runCatching {
@@ -343,12 +350,13 @@ class OverlayService : Service(), BubbleViewListener {
     }
     //endregion
 
+    //region Magnifier Mode
     private fun startMagnifierMode() {
         magnifierLensView?.visibility = View.VISIBLE
         magnifierJob = serviceScope.launch {
             val bubble = floatingBubbleView ?: return@launch
             withContext(Dispatchers.Main) {
-                bubble.alpha = 0.0f  // Thay INVISIBLE bằng alpha=0 để giữ touch events
+                bubble.alpha = 0.0f
             }
 
             val screenBitmap = try {
@@ -357,8 +365,9 @@ class OverlayService : Service(), BubbleViewListener {
                 Log.e(TAG, "Capture failed: ${e.stackTraceToString()}")
                 null
             }
+
             withContext(Dispatchers.Main) {
-                bubble.alpha = 1.0f  // Reset alpha (nhưng trong magnifier, sẽ set 0 ở updateAppearance)
+                bubble.alpha = 1.0f
             }
 
             if (screenBitmap == null) {
@@ -400,7 +409,6 @@ class OverlayService : Service(), BubbleViewListener {
             checkCircleRectIntersection(scanCenter.x, scanCenter.y, lensRadius, screenRect)
         }
 
-
         if (targetCacheItem?.original == lastHoveredBlock) return
 
         lastHoveredBlock = targetCacheItem?.original
@@ -413,25 +421,14 @@ class OverlayService : Service(), BubbleViewListener {
             magnifierResultViews.add(resultView)
         }
     }
-
-    override fun onDrag(x: Int, y: Int) {
-        // Chỉ cập nhật kính lúp khi đang ở chế độ Magnifier
-        if (currentState is ServiceState.MAGNIFIER_ACTIVE) {
-            val lensDetails = calculateLensDetails(x, y)
-            updateMagnifierLensPosition(lensDetails)
-            findAndShowMagnifierResultAt(lensDetails.scanCenter)
-        }
-    }
     //endregion
 
-    //region Logic Dịch Toàn cầu (Global Translate)
+    //region Global Translation
     private fun performGlobalTranslate() = serviceScope.launch {
-        // === BƯỚC 1: CHỤP VÀ CHUẨN BỊ ẢNH TRƯỚC KHI HIỂN THỊ BẤT CỨ GÌ ===
-
-        // Chờ một chút để các animation (như đóng panel) hoàn thành
+        // Chờ một chút để các animation hoàn thành
         delay(100L)
 
-        // Chụp ảnh màn hình (lúc này chưa có nền mờ)
+        // Chụp ảnh màn hình
         val fullScreenBitmap = captureScreenWithBubbleHidden()
         if (fullScreenBitmap == null) {
             Toast.makeText(this@OverlayService, "Không thể chụp màn hình", Toast.LENGTH_SHORT).show()
@@ -452,29 +449,23 @@ class OverlayService : Service(), BubbleViewListener {
             setState(ServiceState.IDLE)
             return@launch
         }
-        // Giải phóng bộ nhớ của ảnh gốc ngay lập tức
         fullScreenBitmap.recycle()
 
-
-        // === BƯỚC 2: SAU KHI ĐÃ CÓ ẢNH, MỚI HIỂN THỊ UI ===
+        // Hiển thị overlay
         val overlay = showGlobalOverlay() ?: run {
-            // Nếu không hiển thị được overlay, phải hủy bitmap đã tạo để tránh rò rỉ bộ nhớ
             croppedBitmap.recycle()
             setState(ServiceState.IDLE)
             return@launch
         }
         overlay.showLoading()
 
-
-        // === BƯỚC 3: XỬ LÝ ẢNH VÀ HIỂN THỊ KẾT QUẢ ===
+        // Xử lý ảnh và hiển thị kết quả
         overlay.doOnLayout { view ->
             serviceScope.launch(Dispatchers.IO) {
-                // Lấy tọa độ Y của overlay để tính toán vị trí hiển thị chính xác
                 val location = IntArray(2)
                 view.getLocationOnScreen(location)
                 val windowOffsetY = location[1]
 
-                // Thực hiện OCR và dịch trên ảnh đã được chuẩn bị sẵn
                 performOcrAndTranslation(croppedBitmap).onSuccess { results ->
                     withContext(Dispatchers.Main) {
                         overlay.hideLoading()
@@ -498,13 +489,13 @@ class OverlayService : Service(), BubbleViewListener {
                     }
                 }
 
-                // Dọn dẹp bitmap cuối cùng sau khi mọi thứ hoàn tất
                 croppedBitmap.recycle()
             }
         }
     }
+    //endregion
 
-    //region Quản lý Service & Tương tác Hệ thống
+    //region Service Management & System Interactions
     private fun handleStartService(intent: Intent) {
         if (!hasOverlayPermission()) {
             stopSelf()
@@ -520,7 +511,6 @@ class OverlayService : Service(), BubbleViewListener {
         }
 
         if (resultCode == Activity.RESULT_OK && data != null) {
-            // Refactor: Khởi tạo MediaProjection và các thành phần chụp màn hình
             initializeMediaProjection(resultCode, data)
             showFloatingBubble()
             isRunning = true
@@ -537,12 +527,10 @@ class OverlayService : Service(), BubbleViewListener {
         try {
             serviceScope.cancel()
 
-            // Refactor: Dọn dẹp các thành phần chụp màn hình
             virtualDisplay?.release()
             imageReader?.close()
             mediaProjection?.stop()
 
-            // Dọn dẹp các view
             floatingBubbleView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
             globalOverlay?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
             magnifierLensView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
@@ -625,8 +613,6 @@ class OverlayService : Service(), BubbleViewListener {
             return@suspendCancellableCoroutine
         }
 
-        // Sau khi kiểm tra null ở trên, trình biên dịch đã biết chắc `image` là kiểu `Image` (không null)
-        // và có thể truy cập các thuộc tính như .planes, .width, .close()
         try {
             val planes = image.planes
             val buffer = planes[0].buffer
@@ -656,7 +642,7 @@ class OverlayService : Service(), BubbleViewListener {
             Log.e(TAG, "Error processing screen capture image", e)
             if (continuation.isActive) continuation.resume(null)
         } finally {
-            image.close() // Quan trọng: Luôn đóng image sau khi dùng xong
+            image.close()
         }
     }
 
@@ -664,14 +650,10 @@ class OverlayService : Service(), BubbleViewListener {
         val bubble = floatingBubbleView ?: return null
         return withContext(Dispatchers.Main) {
             try {
-                // 1. Ẩn bong bóng
                 bubble.visibility = View.INVISIBLE
-                // 2. Chờ 1 frame để UI thread render lại
                 delay(16)
-                // 3. Chụp màn hình
                 captureScreen()
             } finally {
-                // 4. Hiện lại bong bóng (luôn luôn thực thi)
                 bubble.visibility = View.VISIBLE
             }
         }
@@ -697,7 +679,7 @@ class OverlayService : Service(), BubbleViewListener {
     }
     //endregion
 
-    //region Quản lý UI & View
+    //region UI & View Management
     private data class LensDetails(val iconTopLeft: Point, val scanCenter: Point)
 
     private fun calculateLensDetails(handleX: Int, handleY: Int): LensDetails {
@@ -705,11 +687,9 @@ class OverlayService : Service(), BubbleViewListener {
         val handleCenterX = handleX + handleSize / 2
         val handleCenterY = handleY + handleSize / 2
 
-        // Offset icon kính lúp chéo trên-trái 45°
         val offset = (LENS_SIZE * 0.4f).toInt()
         val diagonal = (offset / Math.sqrt(2.0)).toInt()
 
-        // Tâm icon (cũng là tâm scan)
         val lensCenterX = handleCenterX - diagonal
         val lensCenterY = handleCenterY - diagonal
 
@@ -718,7 +698,7 @@ class OverlayService : Service(), BubbleViewListener {
 
         return LensDetails(
             iconTopLeft = Point(iconTopLeftX, iconTopLeftY),
-            scanCenter = Point(lensCenterX, lensCenterY) // 🟢 lấy tâm icon làm tâm scan
+            scanCenter = Point(lensCenterX, lensCenterY)
         )
     }
 
@@ -742,7 +722,6 @@ class OverlayService : Service(), BubbleViewListener {
     private fun showFloatingBubble() {
         if (floatingBubbleView != null) return
 
-        // DÙNG themedContext ở đây
         floatingBubbleView = FloatingBubbleView(themedContext, serviceScope).apply {
             listener = this@OverlayService
         }
@@ -772,7 +751,6 @@ class OverlayService : Service(), BubbleViewListener {
     private fun showGlobalOverlay(): GlobalTranslationOverlay? {
         if (globalOverlay != null) return globalOverlay
 
-        // DÙNG themedContext ở đây
         globalOverlay = GlobalTranslationOverlay(themedContext, windowManager).apply {
             onDismiss = {
                 globalOverlay = null
@@ -821,10 +799,9 @@ class OverlayService : Service(), BubbleViewListener {
         magnifierResultViews.clear()
     }
 
-    // Sửa lại hàm này để nhận thêm yOffset
     private fun displaySingleGlobalResult(
         screenRect: Rect,
-        finalTopMargin: Int, // MỚI: Nhận margin đã tính sẵn
+        finalTopMargin: Int,
         text: String,
         overlay: GlobalTranslationOverlay?
     ) {
@@ -836,7 +813,7 @@ class OverlayService : Service(), BubbleViewListener {
             screenRect.height() + (paddingPx * 2)
         ).apply {
             leftMargin = screenRect.left - paddingPx
-            topMargin = finalTopMargin - paddingPx // Áp dụng margin đã được tính toán
+            topMargin = finalTopMargin - paddingPx
         }
         overlay?.addResultView(resultView, params)
     }
@@ -856,7 +833,6 @@ class OverlayService : Service(), BubbleViewListener {
 
         magnifierLensView = ImageView(this).apply {
             setImageResource(R.drawable.ic_search)
-            // Ẩn nó đi ngay từ đầu
             visibility = View.GONE
         }
 
@@ -865,14 +841,13 @@ class OverlayService : Service(), BubbleViewListener {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
-        // Vị trí ban đầu không quan trọng vì nó sẽ được cập nhật sau
         val params = createOverlayLayoutParams(LENS_SIZE, LENS_SIZE, flags)
         windowManager.addView(magnifierLensView, params)
     }
 
     private fun updateMagnifierLensPosition(lensDetails: LensDetails) {
         magnifierLensView?.let { lens ->
-            lens.visibility = View.VISIBLE // Đảm bảo visible khi drag
+            lens.visibility = View.VISIBLE
             val params = lens.layoutParams as? WindowManager.LayoutParams ?: return
             if (params.x != lensDetails.iconTopLeft.x || params.y != lensDetails.iconTopLeft.y) {
                 params.x = lensDetails.iconTopLeft.x
@@ -889,8 +864,261 @@ class OverlayService : Service(), BubbleViewListener {
     private fun removeMagnifierLens() {
         magnifierLensView?.visibility = View.GONE
     }
+    //endregion
 
-    //region Tiện ích (Utilities)
+    //region Region Selection and Translation
+    private fun showRegionSelectOverlay() {
+        if (regionSelectOverlay != null) return
+
+        regionSelectOverlay = RegionSelectionOverlay(themedContext,
+            onRegionSelected = { rect ->
+                performRegionTranslation(rect)
+            },
+            onDismiss = {
+                setState(ServiceState.IDLE)
+            }
+        )
+
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            0
+        )
+        windowManager.addView(regionSelectOverlay, params)
+    }
+
+    private fun removeRegionSelectOverlay() {
+        regionSelectOverlay?.let { overlay ->
+            if (overlay.isAttachedToWindow) {
+                windowManager.removeView(overlay)
+            }
+        }
+        regionSelectOverlay = null
+    }
+
+    private fun showRegionResultOverlay(region: Rect): RegionResultOverlay? {
+        if (regionResultOverlay != null) return regionResultOverlay
+
+        regionResultOverlay = RegionResultOverlay(themedContext, region) {
+            setState(ServiceState.IDLE)
+        }
+
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            0
+        )
+        windowManager.addView(regionResultOverlay, params)
+        return regionResultOverlay
+    }
+
+    private fun removeRegionResultOverlay() {
+        regionResultOverlay?.let { overlay ->
+            if (overlay.isAttachedToWindow) {
+                windowManager.removeView(overlay)
+            }
+        }
+        regionResultOverlay = null
+    }
+
+    private fun performRegionTranslation(region: Rect) = serviceScope.launch {
+        removeRegionSelectOverlay()
+        delay(100L)
+
+        val startTime = System.currentTimeMillis()
+
+        // Chụp toàn màn hình và cắt bỏ status bar (giống như chế độ toàn cầu)
+        val fullScreenBitmap = captureScreenWithBubbleHidden()
+        if (fullScreenBitmap == null) {
+            Toast.makeText(this@OverlayService, "Không thể chụp màn hình", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+
+        // Cắt bỏ status bar từ ảnh toàn màn hình (giống performGlobalTranslate)
+        val statusBarHeight = getStatusBarHeight()
+        val croppedFullScreenBitmap = try {
+            Bitmap.createBitmap(
+                fullScreenBitmap, 0, statusBarHeight,
+                fullScreenBitmap.width, fullScreenBitmap.height - statusBarHeight
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi khi cắt status bar", e)
+            fullScreenBitmap.recycle()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+        fullScreenBitmap.recycle()
+
+        // Crop vùng được chọn từ ảnh đã bỏ status bar
+        val regionBitmap = try {
+            cropRegionFromCroppedFullScreen(croppedFullScreenBitmap, region, statusBarHeight)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to crop region", e)
+            croppedFullScreenBitmap.recycle()
+            Toast.makeText(this@OverlayService, "Không thể cắt vùng được chọn", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+
+        croppedFullScreenBitmap.recycle()
+        val captureTime = System.currentTimeMillis() - startTime
+
+        if (regionBitmap == null) {
+            Toast.makeText(this@OverlayService, "Không thể tạo ảnh vùng", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+
+        Log.d(TAG, "Region crop completed in ${captureTime}ms, size: ${regionBitmap.width}x${regionBitmap.height}")
+
+        val resultOverlay = showRegionResultOverlay(region) ?: run {
+            regionBitmap.recycle()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+        resultOverlay.showLoading()
+        setState(ServiceState.REGION_RESULT_ACTIVE)
+
+        resultOverlay.doOnLayout { view ->
+            serviceScope.launch(Dispatchers.IO) {
+                val location = IntArray(2)
+                view.getLocationOnScreen(location)
+                val windowOffsetY = location[1]
+
+                val ocrStartTime = System.currentTimeMillis()
+                performOcrAndTranslation(regionBitmap).onSuccess { results ->
+                    val totalTime = System.currentTimeMillis() - startTime
+
+                    withContext(Dispatchers.Main) {
+                        resultOverlay.hideLoading()
+                        if (results.isEmpty()) {
+                            Toast.makeText(this@OverlayService, "Không tìm thấy văn bản", Toast.LENGTH_SHORT).show()
+                            delay(1500)
+                            setState(ServiceState.IDLE)
+                        } else {
+                            results.forEach { block ->
+                                // Chuyển tọa độ từ bitmap vùng về màn hình (như chế độ toàn cầu)
+                                val screenRect = mapRegionBitmapRectToScreen(block.original.boundingBox!!, region, statusBarHeight)
+                                val absoluteTargetY = screenRect.top + statusBarHeight
+                                val finalTopMargin = absoluteTargetY - windowOffsetY
+
+                                resultOverlay.addTranslationResult(
+                                    Rect(screenRect.left, finalTopMargin, screenRect.right, finalTopMargin + screenRect.height()),
+                                    block.translated
+                                )
+                            }
+
+                            Log.d(TAG, "Region translation completed: total_time=${totalTime}ms, " +
+                                "ocr_time=${System.currentTimeMillis() - ocrStartTime}ms, " +
+                                "results_count=${results.size}")
+                        }
+                    }
+                }.onFailure { e ->
+                    withContext(Dispatchers.Main) {
+                        resultOverlay.hideLoading()
+                        Log.e(TAG, "Lỗi khi dịch vùng", e)
+                        Toast.makeText(this@OverlayService, "Lỗi: ${e.message}", Toast.LENGTH_LONG).show()
+                        setState(ServiceState.IDLE)
+                    }
+                }
+
+                regionBitmap.recycle()
+            }
+        }
+    }
+
+    private fun cropRegionFromFullScreen(fullScreenBitmap: Bitmap, region: Rect): Bitmap? {
+        val statusBarHeight = getStatusBarHeight()
+
+        // Điều chỉnh tọa độ vùng cho ảnh toàn màn hình (bao gồm status bar)
+        val adjustedRegion = Rect(
+            region.left,
+            region.top - statusBarHeight,
+            region.right,
+            region.bottom - statusBarHeight
+        )
+
+        // Kiểm tra bounds
+        val maxWidth = fullScreenBitmap.width
+        val maxHeight = fullScreenBitmap.height
+
+        val clampedRegion = Rect(
+            Math.max(0, adjustedRegion.left),
+            Math.max(0, adjustedRegion.top),
+            Math.min(maxWidth, adjustedRegion.right),
+            Math.min(maxHeight, adjustedRegion.bottom)
+        )
+
+        if (clampedRegion.width() <= 0 || clampedRegion.height() <= 0) {
+            Log.e(TAG, "Invalid region after clamping: $clampedRegion")
+            return null
+        }
+
+        return try {
+            Bitmap.createBitmap(
+                fullScreenBitmap,
+                clampedRegion.left,
+                clampedRegion.top,
+                clampedRegion.width(),
+                clampedRegion.height()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create cropped bitmap", e)
+            null
+        }
+    }
+    private fun cropRegionFromCroppedFullScreen(croppedFullScreenBitmap: Bitmap, region: Rect, statusBarHeight: Int): Bitmap? {
+        // Điều chỉnh tọa độ vùng cho ảnh đã bỏ status bar
+        val adjustedRegion = Rect(
+            region.left,
+            region.top - statusBarHeight,  // Trừ status bar vì ảnh đã bỏ status bar
+            region.right,
+            region.bottom - statusBarHeight
+        )
+
+        // Kiểm tra bounds
+        val maxWidth = croppedFullScreenBitmap.width
+        val maxHeight = croppedFullScreenBitmap.height
+
+        val clampedRegion = Rect(
+            Math.max(0, adjustedRegion.left),
+            Math.max(0, adjustedRegion.top),
+            Math.min(maxWidth, adjustedRegion.right),
+            Math.min(maxHeight, adjustedRegion.bottom)
+        )
+
+        if (clampedRegion.width() <= 0 || clampedRegion.height() <= 0) {
+            Log.e(TAG, "Invalid region after clamping: $clampedRegion")
+            return null
+        }
+
+        return try {
+            Bitmap.createBitmap(
+                croppedFullScreenBitmap,
+                clampedRegion.left,
+                clampedRegion.top,
+                clampedRegion.width(),
+                clampedRegion.height()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create cropped bitmap", e)
+            null
+        }
+    }
+
+    private fun mapRegionBitmapRectToScreen(ocrRect: Rect, originalRegion: Rect, statusBarHeight: Int): Rect {
+        // Tọa độ trong bitmap vùng + offset của vùng trên màn hình (đã trừ status bar)
+        return Rect(
+            originalRegion.left + ocrRect.left,
+            (originalRegion.top - statusBarHeight) + ocrRect.top,  // Trừ status bar như trong chế độ toàn cầu
+            originalRegion.left + ocrRect.right,
+            (originalRegion.top - statusBarHeight) + ocrRect.bottom
+        )
+    }
+    //endregion
+
+    //region Utilities
     private fun checkCircleRectIntersection(
         circleCenterX: Int,
         circleCenterY: Int,
@@ -935,114 +1163,7 @@ class OverlayService : Service(), BubbleViewListener {
         if (resourceId > 0) {
             return resources.getDimensionPixelSize(resourceId)
         }
-        // Giá trị dự phòng nếu không tìm thấy resource
         return (24 * resources.displayMetrics.density).toInt()
     }
-
-    private fun showRegionSelectOverlay() {
-        if (regionSelectOverlay != null) return
-
-        regionSelectOverlay = RegionSelectionOverlay(themedContext,
-            onRegionSelected = { rect ->
-                // Người dùng đã chọn xong, tiến hành dịch
-                performRegionTranslation(rect)
-            },
-            onDismiss = {
-                // Người dùng hủy
-                setState(ServiceState.IDLE)
-            }
-        )
-
-        val params = createOverlayLayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            0 // Không cần flag đặc biệt, cho phép focus và touch
-        )
-        windowManager.addView(regionSelectOverlay, params)
-    }
-
-    private fun removeRegionSelectOverlay() {
-        regionSelectOverlay?.let { overlay: RegionSelectionOverlay ->
-            if (overlay.isAttachedToWindow) {
-                windowManager.removeView(overlay)
-            }
-        }
-        regionSelectOverlay = null
-    }
-
-    private fun showRegionResultOverlay(region: Rect): RegionResultOverlay? {
-        if (regionResultOverlay != null) return regionResultOverlay
-
-        regionResultOverlay = RegionResultOverlay(themedContext, region) {
-            setState(ServiceState.IDLE)
-        }
-
-        val params = createOverlayLayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            0 // Cho phép focus và touch
-        )
-        windowManager.addView(regionResultOverlay, params)
-        return regionResultOverlay
-    }
-
-    private fun removeRegionResultOverlay() {
-        regionResultOverlay?.let { overlay: RegionResultOverlay ->
-            if (overlay.isAttachedToWindow) {
-                windowManager.removeView(overlay)
-            }
-        }
-        regionResultOverlay = null
-    }
-
-    private fun performRegionTranslation(region: Rect) = serviceScope.launch {
-        removeRegionSelectOverlay()
-
-        // Hiển thị overlay kết quả ngay lập tức để hiển thị loading
-        val resultOverlay = showRegionResultOverlay(region)
-        resultOverlay?.showLoading()
-        setState(ServiceState.REGION_RESULT_ACTIVE)
-
-        val screenBitmap = captureScreenWithBubbleHidden()
-        if (screenBitmap == null) {
-            Toast.makeText(this@OverlayService, "Không thể chụp màn hình", Toast.LENGTH_SHORT).show()
-            setState(ServiceState.IDLE)
-            return@launch
-        }
-
-        val croppedBitmap = try {
-            // Đảm bảo vùng cắt nằm trong giới hạn của bitmap
-            val validRegion = Rect(region)
-            if (!validRegion.intersect(0, 0, screenBitmap.width, screenBitmap.height)) {
-                throw IllegalArgumentException("Vùng chọn nằm ngoài màn hình.")
-            }
-            Bitmap.createBitmap(screenBitmap, validRegion.left, validRegion.top, validRegion.width(), validRegion.height())
-        } catch (e: Exception) {
-            Log.e(TAG, "Lỗi khi cắt ảnh", e)
-            Toast.makeText(this@OverlayService, "Lỗi: Vùng chọn không hợp lệ.", Toast.LENGTH_SHORT).show()
-            setState(ServiceState.IDLE)
-            screenBitmap.recycle()
-            return@launch
-        }
-        screenBitmap.recycle()
-
-        performOcrAndTranslation(croppedBitmap).onSuccess { results ->
-            resultOverlay?.hideLoading()
-            if (results.isEmpty()) {
-                Toast.makeText(this@OverlayService, "Không tìm thấy văn bản", Toast.LENGTH_SHORT).show()
-                delay(1500)
-                setState(ServiceState.IDLE)
-            } else {
-                // Gộp tất cả kết quả dịch thành một chuỗi
-                val combinedResult = results.joinToString("\n") { it.translated }
-                resultOverlay?.updateResult(combinedResult)
-            }
-        }.onFailure { e ->
-            resultOverlay?.hideLoading()
-            Log.e(TAG, "Lỗi khi dịch vùng", e)
-            Toast.makeText(this@OverlayService, "Lỗi: ${e.message}", Toast.LENGTH_LONG).show()
-            setState(ServiceState.IDLE)
-        }
-        croppedBitmap.recycle()
-    }
+    //endregion
 }
