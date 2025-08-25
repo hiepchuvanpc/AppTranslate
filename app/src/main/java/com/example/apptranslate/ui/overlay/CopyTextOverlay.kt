@@ -32,7 +32,7 @@ class CopyTextOverlay(
     init {
         // Background mờ để có thể nhấn ra ngoài để đóng
         backgroundView = View(context).apply {
-            setBackgroundColor(ContextCompat.getColor(context, R.color.overlay_background))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.translation_box_bg))
             setOnClickListener { onDismiss() }
         }
         addView(backgroundView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -47,20 +47,32 @@ class CopyTextOverlay(
     // Đã xóa instruction text
 
     fun addCopyTextResult(rect: Rect, text: String) {
+        // Padding 3dp mỗi chiều
+        val paddingDp = 3f
+        val paddingPx = (paddingDp * resources.displayMetrics.density).toInt()
+        val viewWidth = rect.width() + (paddingPx * 2)
+        val viewHeight = rect.height() + (paddingPx * 2)
+
+        // Chọn màu chữ tương phản với nền box
+        val isNight = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val textColor = if (isNight) {
+            ContextCompat.getColor(context, android.R.color.white)
+        } else {
+            ContextCompat.getColor(context, android.R.color.black)
+        }
+
         val resultView = CopyableTextView(context, text) { copiedText ->
             copyToClipboard(copiedText)
         }
-        // Đặt minWidth, maxWidth, wrap_content để vừa nội dung
-        resultView.minWidth = (60 * resources.displayMetrics.density).toInt()
-        resultView.maxWidth = (180 * resources.displayMetrics.density).toInt()
-        resultView.setPadding(16, 8, 16, 8)
+        resultView.setTextColor(textColor)
         resultView.setTextIsSelectable(true)
+        resultView.setPadding(0, 0, 0, 0)
         val params = LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+            viewWidth,
+            viewHeight
         ).apply {
-            leftMargin = rect.left
-            topMargin = rect.top
+            leftMargin = rect.left - paddingPx
+            topMargin = rect.top - paddingPx
         }
         containerView.addView(resultView, params)
     }
@@ -89,10 +101,12 @@ class CopyableTextView(
 
     init {
         setText(text)
-        textSize = 15f
-        // Sử dụng màu theo theme hệ thống
+        // Autosize text để luôn vừa với box
+        androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+            this, 8, 16, 1, android.util.TypedValue.COMPLEX_UNIT_SP
+        )
         setTextColor(resolveAttrColor(context, android.R.attr.textColorPrimary))
-        background = ContextCompat.getDrawable(context, R.drawable.copyable_text_background)
+        background = ContextCompat.getDrawable(context, R.drawable.translation_text_background)
         gravity = Gravity.CENTER
         isClickable = true
         isFocusable = true

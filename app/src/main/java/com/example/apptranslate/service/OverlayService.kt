@@ -207,16 +207,14 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onDestroy() {
+        super.onDestroy()
         try {
             unregisterReceiver(orientationChangeReceiver)
-            unregisterReceiver(imageTranslationReceiver)
-            // Thêm dòng này:
             unregisterReceiver(cameraPermissionReceiver)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to unregister receivers", e)
         }
         stopServiceCleanup()
-        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -880,7 +878,7 @@ class OverlayService : Service(), BubbleViewListener {
 
     private fun showSingleMagnifierResult(position: Rect): TranslationResultView {
         val resultView = TranslationResultView(this)
-        val paddingDp = 2f
+        val paddingDp = 3f
         val paddingPx = (paddingDp * resources.displayMetrics.density).toInt()
         val viewWidth = position.width() + (paddingPx * 2)
         val viewHeight = position.height() + (paddingPx * 2)
@@ -910,7 +908,7 @@ class OverlayService : Service(), BubbleViewListener {
         overlay: GlobalTranslationOverlay?
     ) {
         val resultView = TranslationResultView(this).apply { updateText(text) }
-        val paddingPx = (2f * resources.displayMetrics.density).toInt()
+        val paddingPx = (3f * resources.displayMetrics.density).toInt()
 
         val params = FrameLayout.LayoutParams(
             screenRect.width() + (paddingPx * 2),
@@ -1419,7 +1417,7 @@ class OverlayService : Service(), BubbleViewListener {
         overlay: GlobalTranslationOverlay?
     ) {
         val resultView = TranslationResultView(this).apply { updateText(text) }
-        val paddingPx = (2f * resources.displayMetrics.density).toInt()
+        val paddingPx = (3f * resources.displayMetrics.density).toInt()
 
         val params = FrameLayout.LayoutParams(
             rect.width() + (paddingPx * 2),

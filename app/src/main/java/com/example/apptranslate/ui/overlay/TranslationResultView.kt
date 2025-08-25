@@ -19,6 +19,14 @@ class TranslationResultView(context: Context) : FrameLayout(context) {
         binding = OverlayTranslationResultBinding.inflate(inflater, this, true)
 
         setupAutoResizeText()
+        // Đặt màu chữ tương phản với nền box
+        val isNight = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val textColor = if (isNight) {
+            context.getColor(android.R.color.white)
+        } else {
+            context.getColor(android.R.color.black)
+        }
+        binding.tvTranslatedText.setTextColor(textColor)
     }
 
     private fun setupAutoResizeText() {

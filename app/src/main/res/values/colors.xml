@@ -28,4 +28,8 @@
 
     <!-- Overlay colors -->
     <color name="overlay_background">#80000000</color>
+
+    <!-- Translation box colors -->
+    <color name="translation_box_bg">#F2FFFFFF</color> <!-- trắng mờ, dùng cho light mode -->
+    <color name="translation_box_stroke">#22000000</color> <!-- viền mờ -->
 </resources>
