@@ -1,54 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/black">
+    android:orientation="vertical"
+    android:background="@android:color/black">
 
-    <!-- App Bar -->
-    <com.google.android.material.appbar.AppBarLayout
+    <!-- Toolbar -->
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar">
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        app:navigationIcon="@drawable/ic_arrow_back"
+        app:title="Kết quả dịch ảnh"
+        app:titleTextColor="@android:color/white" />
 
-        <androidx.appcompat.widget.Toolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
-            app:navigationIcon="@drawable/ic_arrow_back"
-            app:title="Kết quả dịch ảnh"
-            app:titleTextColor="@color/white" />
-
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <!-- Main Content -->
-    <androidx.core.widget.NestedScrollView
+    <!-- Scroll container for image -->
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
 
-        <LinearLayout
+        <HorizontalScrollView
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:layout_height="wrap_content">
 
-            <!-- Image Container -->
+            <!-- Image container with overlay -->
             <FrameLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp">
+                android:layout_gravity="center">
 
+                <!-- Original image -->
                 <ImageView
                     android:id="@+id/imageView"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:adjustViewBounds="true"
-                    android:background="@color/surface"
                     android:scaleType="fitCenter" />
 
-                <!-- Translation Overlays Container -->
+                <!-- Translation overlays container -->
                 <FrameLayout
                     android:id="@+id/overlayContainer"
                     android:layout_width="match_parent"
@@ -56,73 +49,61 @@
 
             </FrameLayout>
 
-            <!-- Results Info -->
-            <TextView
-                android:id="@+id/tvResultCount"
-                android:layout_width="match_parent"
+        </HorizontalScrollView>
+
+    </ScrollView>
+
+    <!-- Bottom info panel -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:background="?attr/colorSurface">
+
+        <TextView
+            android:id="@+id/tvResultCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Đang xử lý..."
+            android:textSize="14sp"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:id="@+id/tvNoResults"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Không tìm thấy văn bản nào trong ảnh"
+            android:textSize="14sp"
+            android:textColor="?attr/colorError"
+            android:visibility="gone"
+            android:layout_marginTop="8dp" />
+
+        <!-- Action buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="16dp"
+            android:gravity="end">
+
+            <Button
+                android:id="@+id/btnSelectAnotherImage"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:gravity="center"
-                android:text="Tìm thấy 0 đoạn văn bản"
-                android:textColor="@color/white"
-                android:textSize="16sp" />
+                android:text="Chọn ảnh khác"
+                android:layout_marginEnd="8dp"
+                style="@style/Widget.Material3.Button.TextButton" />
 
-            <TextView
-                android:id="@+id/tvNoResults"
-                android:layout_width="match_parent"
+            <Button
+                android:id="@+id/btnRetranslate"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                android:gravity="center"
-                android:text="Không tìm thấy văn bản trong ảnh"
-                android:textColor="@color/secondary_text"
-                android:textSize="14sp"
-                android:visibility="gone" />
-
-            <!-- Instructions -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                android:gravity="center"
-                android:text="Nhấn giữ vào ô dịch để xem văn bản gốc"
-                android:textColor="@color/secondary_text"
-                android:textSize="12sp" />
-
-            <!-- Action Buttons -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSelectAnotherImage"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
-                    android:text="Chọn ảnh khác"
-                    android:textColor="@color/white"
-                    app:backgroundTint="@color/secondary"
-                    app:icon="@drawable/ic_image"
-                    app:iconTint="@color/white" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnRetranslate"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:text="Dịch lại"
-                    android:textColor="@color/white"
-                    app:backgroundTint="@color/primary"
-                    app:icon="@drawable/ic_translate"
-                    app:iconTint="@color/white" />
-
-            </LinearLayout>
+                android:text="Dịch lại"
+                style="@style/Widget.Material3.Button" />
 
         </LinearLayout>
 
-    </androidx.core.widget.NestedScrollView>
+    </LinearLayout>
 
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
+</LinearLayout>

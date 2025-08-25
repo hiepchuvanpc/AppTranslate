@@ -395,6 +395,15 @@ class OverlayService : Service(), BubbleViewListener {
     }
     //endregion
 
+    // Tiền xử lý text trước khi dịch
+    private fun preprocessText(text: String): String {
+        var result = text.replace("([.,!?])([\\p{L}\\d])".toRegex(), "$1 $2")
+        result = result.replace("([a-z])([A-Z])".toRegex(), "$1 $2")
+        result = result.replace("[^\\p{L}\\p{N}\\s.,!?]".toRegex(), "")
+        result = result.replace("\\s+".toRegex(), " ").trim()
+        return result
+    }
+
     //region Logic chung cho OCR và Dịch thuật
     private suspend fun performOcrAndTranslation(bitmap: Bitmap): Result<List<TranslatedBlock>> = runCatching {
         if (bitmap.isRecycled) return@runCatching emptyList()
@@ -407,7 +416,9 @@ class OverlayService : Service(), BubbleViewListener {
         val blocksToTranslate = ocrResult.textBlocks.filter { it.text.isNotBlank() && it.boundingBox != null }
         if (blocksToTranslate.isEmpty()) return@runCatching emptyList()
 
-        val combinedText = blocksToTranslate.joinToString(separator = OCR_TRANSLATION_DELIMITER) { it.text }
+        // Tiền xử lý từng block trước khi dịch
+        val preprocessedBlocks = blocksToTranslate.map { it.copy(text = preprocessText(it.text)) }
+        val combinedText = preprocessedBlocks.joinToString(separator = OCR_TRANSLATION_DELIMITER) { it.text }
         val targetLang = settingsManager.getTargetLanguageCode() ?: "en"
         val transSource = settingsManager.getTranslationSource()
 
@@ -418,12 +429,12 @@ class OverlayService : Service(), BubbleViewListener {
         val translatedText = translationResult.getOrThrow()
         val translatedSegments = translatedText.split(OCR_TRANSLATION_DELIMITER)
 
-        if (blocksToTranslate.size == translatedSegments.size) {
-            blocksToTranslate.zip(translatedSegments).map { (original, translated) ->
+        if (preprocessedBlocks.size == translatedSegments.size) {
+            preprocessedBlocks.zip(translatedSegments).map { (original, translated) ->
                 TranslatedBlock(original, translated)
             }
         } else {
-            Log.w(TAG, "Mismatch between OCR blocks (${blocksToTranslate.size}) and translated segments (${translatedSegments.size})")
+            Log.w(TAG, "Mismatch between OCR blocks (${preprocessedBlocks.size}) and translated segments (${translatedSegments.size})")
             emptyList()
         }
     }
