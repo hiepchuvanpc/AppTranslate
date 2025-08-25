@@ -48,6 +48,9 @@ import kotlin.math.roundToInt
 import androidx.core.view.doOnLayout
 import com.example.apptranslate.viewmodel.LanguageViewModel
 import com.example.apptranslate.viewmodel.LanguageViewModelFactory
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.content.res.Configuration
 
 @SuppressLint("ViewConstructor")
 class OverlayService : Service(), BubbleViewListener {
@@ -73,16 +76,6 @@ class OverlayService : Service(), BubbleViewListener {
         const val ACTION_LANGUAGES_UPDATED_FROM_SERVICE = "com.example.apptranslate.LANGUAGES_UPDATED"
         const val EXTRA_SOURCE_LANG = "SOURCE_LANG"
         const val EXTRA_TARGET_LANG = "TARGET_LANG"
-        private var currentOrientation = Configuration.ORIENTATION_UNDEFINED
-        private var currentStatusBarHeight = 0
-        private val orientationChangeReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == Intent.ACTION_CONFIGURATION_CHANGED) {
-                    handleOrientationChange()
-                }
-            }
-        }
-
         private const val OCR_TRANSLATION_DELIMITER = "\n\n"
     }
     //endregion
@@ -100,6 +93,15 @@ class OverlayService : Service(), BubbleViewListener {
     private var languageSheetView: LanguageSheetView? = null
     private var regionSelectOverlay: RegionSelectionOverlay? = null
     private var regionResultOverlay: RegionResultOverlay? = null
+    private var currentOrientation = Configuration.ORIENTATION_UNDEFINED
+    private var currentStatusBarHeight = 0
+    private val orientationChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_CONFIGURATION_CHANGED) {
+                handleOrientationChange()
+            }
+        }
+    }
 
     // Views và UI
     private var floatingBubbleView: FloatingBubbleView? = null
@@ -143,10 +145,12 @@ class OverlayService : Service(), BubbleViewListener {
         settingsManager = SettingsManager.getInstance(this)
         translationManager = TranslationManager(this)
         createNotificationChannel()
+
         // Đăng ký receiver cho việc xoay màn hình
         registerReceiver(orientationChangeReceiver, IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED))
         currentOrientation = resources.configuration.orientation
         updateStatusBarHeight()
+
         startForeground(NOTIFICATION_ID, createBasicNotification("Dịch vụ đang chạy"))
         languageViewModel = LanguageViewModelFactory(application).create(LanguageViewModel::class.java)
     }
@@ -161,12 +165,12 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     override fun onDestroy() {
-        stopServiceCleanup()
         try {
             unregisterReceiver(orientationChangeReceiver)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to unregister orientation receiver", e)
         }
+        stopServiceCleanup()
         super.onDestroy()
     }
 

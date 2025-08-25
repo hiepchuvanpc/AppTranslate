@@ -47,7 +47,7 @@ class RegionResultOverlay(
         val resultView = TranslationResultView(context).apply {
             updateText(translatedText)
         }
-        
+
         val paddingPx = (2f * context.resources.displayMetrics.density).toInt()
         val params = LayoutParams(
             position.width() + (paddingPx * 2),
@@ -56,7 +56,7 @@ class RegionResultOverlay(
             leftMargin = position.left - paddingPx
             topMargin = position.top - paddingPx
         }
-        
+
         addView(resultView, params)
         resultViews.add(resultView)
     }
@@ -91,7 +91,7 @@ class RegionResultOverlay(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        
+
         // Chỉ vẽ nền mờ trong vùng được chọn
         canvas.save()
         canvas.clipRect(selectedRegion)
