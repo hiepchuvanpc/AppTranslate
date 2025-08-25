@@ -73,6 +73,15 @@ class OverlayService : Service(), BubbleViewListener {
         const val ACTION_LANGUAGES_UPDATED_FROM_SERVICE = "com.example.apptranslate.LANGUAGES_UPDATED"
         const val EXTRA_SOURCE_LANG = "SOURCE_LANG"
         const val EXTRA_TARGET_LANG = "TARGET_LANG"
+        private var currentOrientation = Configuration.ORIENTATION_UNDEFINED
+        private var currentStatusBarHeight = 0
+        private val orientationChangeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_CONFIGURATION_CHANGED) {
+                    handleOrientationChange()
+                }
+            }
+        }
 
         private const val OCR_TRANSLATION_DELIMITER = "\n\n"
     }
@@ -134,6 +143,10 @@ class OverlayService : Service(), BubbleViewListener {
         settingsManager = SettingsManager.getInstance(this)
         translationManager = TranslationManager(this)
         createNotificationChannel()
+        // Đăng ký receiver cho việc xoay màn hình
+        registerReceiver(orientationChangeReceiver, IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED))
+        currentOrientation = resources.configuration.orientation
+        updateStatusBarHeight()
         startForeground(NOTIFICATION_ID, createBasicNotification("Dịch vụ đang chạy"))
         languageViewModel = LanguageViewModelFactory(application).create(LanguageViewModel::class.java)
     }
@@ -149,6 +162,11 @@ class OverlayService : Service(), BubbleViewListener {
 
     override fun onDestroy() {
         stopServiceCleanup()
+        try {
+            unregisterReceiver(orientationChangeReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unregister orientation receiver", e)
+        }
         super.onDestroy()
     }
 
@@ -438,18 +456,26 @@ class OverlayService : Service(), BubbleViewListener {
 
         // Cắt bỏ thanh trạng thái
         val statusBarHeight = getStatusBarHeight()
-        val croppedBitmap = try {
-            Bitmap.createBitmap(
-                fullScreenBitmap, 0, statusBarHeight,
-                fullScreenBitmap.width, fullScreenBitmap.height - statusBarHeight
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Lỗi khi cắt ảnh chụp màn hình", e)
-            fullScreenBitmap.recycle()
-            setState(ServiceState.IDLE)
-            return@launch
+        val croppedBitmap = if (statusBarHeight > 0) {
+            try {
+                Bitmap.createBitmap(
+                    fullScreenBitmap, 0, statusBarHeight,
+                    fullScreenBitmap.width, fullScreenBitmap.height - statusBarHeight
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi khi cắt ảnh chụp màn hình", e)
+                fullScreenBitmap.recycle()
+                setState(ServiceState.IDLE)
+                return@launch
+            }
+        } else {
+            // Status bar bị ẩn, sử dụng ảnh gốc
+            fullScreenBitmap
         }
-        fullScreenBitmap.recycle()
+
+        if (statusBarHeight > 0) {
+            fullScreenBitmap.recycle()
+        }
 
         // Hiển thị overlay
         val overlay = showGlobalOverlay() ?: run {
@@ -573,15 +599,21 @@ class OverlayService : Service(), BubbleViewListener {
             return
         }
 
+        // Đóng components cũ nếu có
+        virtualDisplay?.release()
+        imageReader?.close()
+
         val realSize = getRealScreenSizePx()
         val screenWidth = realSize.x
         val screenHeight = realSize.y
         val screenDensity = resources.displayMetrics.densityDpi
 
         if (screenWidth <= 0 || screenHeight <= 0) {
-             Log.e(TAG, "setupScreenCaptureComponents failed: Invalid screen dimensions ($screenWidth, $screenHeight).")
+            Log.e(TAG, "setupScreenCaptureComponents failed: Invalid screen dimensions ($screenWidth, $screenHeight).")
             return
         }
+
+        Log.d(TAG, "Setting up screen capture: ${screenWidth}x${screenHeight}, density: $screenDensity")
 
         imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
 
@@ -937,18 +969,26 @@ class OverlayService : Service(), BubbleViewListener {
 
         // Cắt bỏ status bar từ ảnh toàn màn hình (giống performGlobalTranslate)
         val statusBarHeight = getStatusBarHeight()
-        val croppedFullScreenBitmap = try {
-            Bitmap.createBitmap(
-                fullScreenBitmap, 0, statusBarHeight,
-                fullScreenBitmap.width, fullScreenBitmap.height - statusBarHeight
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Lỗi khi cắt status bar", e)
-            fullScreenBitmap.recycle()
-            setState(ServiceState.IDLE)
-            return@launch
+        val croppedFullScreenBitmap = if (statusBarHeight > 0) {
+            try {
+                Bitmap.createBitmap(
+                    fullScreenBitmap, 0, statusBarHeight,
+                    fullScreenBitmap.width, fullScreenBitmap.height - statusBarHeight
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi khi cắt status bar", e)
+                fullScreenBitmap.recycle()
+                setState(ServiceState.IDLE)
+                return@launch
+            }
+        } else {
+            // Status bar bị ẩn, sử dụng ảnh gốc
+            fullScreenBitmap
         }
-        fullScreenBitmap.recycle()
+
+        if (statusBarHeight > 0) {
+            fullScreenBitmap.recycle()
+        }
 
         // Crop vùng được chọn từ ảnh đã bỏ status bar
         val regionBitmap = try {
@@ -1069,13 +1109,18 @@ class OverlayService : Service(), BubbleViewListener {
         }
     }
     private fun cropRegionFromCroppedFullScreen(croppedFullScreenBitmap: Bitmap, region: Rect, statusBarHeight: Int): Bitmap? {
-        // Điều chỉnh tọa độ vùng cho ảnh đã bỏ status bar
-        val adjustedRegion = Rect(
-            region.left,
-            region.top - statusBarHeight,  // Trừ status bar vì ảnh đã bỏ status bar
-            region.right,
-            region.bottom - statusBarHeight
-        )
+        // Điều chỉnh tọa độ vùng cho ảnh đã bỏ status bar (nếu có)
+        val adjustedRegion = if (statusBarHeight > 0) {
+            Rect(
+                region.left,
+                region.top - statusBarHeight,  // Trừ status bar vì ảnh đã bỏ status bar
+                region.right,
+                region.bottom - statusBarHeight
+            )
+        } else {
+            // Status bar bị ẩn, sử dụng tọa độ gốc
+            Rect(region)
+        }
 
         // Kiểm tra bounds
         val maxWidth = croppedFullScreenBitmap.width
@@ -1108,17 +1153,85 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     private fun mapRegionBitmapRectToScreen(ocrRect: Rect, originalRegion: Rect, statusBarHeight: Int): Rect {
-        // Tọa độ trong bitmap vùng + offset của vùng trên màn hình (đã trừ status bar)
-        return Rect(
-            originalRegion.left + ocrRect.left,
-            (originalRegion.top - statusBarHeight) + ocrRect.top,  // Trừ status bar như trong chế độ toàn cầu
-            originalRegion.left + ocrRect.right,
-            (originalRegion.top - statusBarHeight) + ocrRect.bottom
-        )
+        // Tọa độ trong bitmap vùng + offset của vùng trên màn hình
+        return if (statusBarHeight > 0) {
+            Rect(
+                originalRegion.left + ocrRect.left,
+                (originalRegion.top - statusBarHeight) + ocrRect.top,  // Trừ status bar
+                originalRegion.left + ocrRect.right,
+                (originalRegion.top - statusBarHeight) + ocrRect.bottom
+            )
+        } else {
+            Rect(
+                originalRegion.left + ocrRect.left,
+                originalRegion.top + ocrRect.top,  // Không trừ status bar
+                originalRegion.left + ocrRect.right,
+                originalRegion.top + ocrRect.bottom
+            )
+        }
     }
     //endregion
 
     //region Utilities
+
+    private fun handleOrientationChange() {
+        val newOrientation = resources.configuration.orientation
+        if (newOrientation != currentOrientation) {
+            Log.d(TAG, "Orientation changed from $currentOrientation to $newOrientation")
+            currentOrientation = newOrientation
+
+            // Cập nhật status bar height
+            updateStatusBarHeight()
+
+            // Tái thiết lập screen capture components với kích thước mới
+            serviceScope.launch {
+                delay(200) // Đợi animation xoay màn hình hoàn thành
+                setupScreenCaptureComponents()
+
+                // Nếu đang ở chế độ magnifier, cập nhật cache
+                if (currentState is ServiceState.MAGNIFIER_ACTIVE) {
+                    refreshMagnifierCache()
+                }
+            }
+
+            // Cập nhật vị trí bubble nếu cần
+            adjustBubblePositionForOrientation()
+        }
+    }
+
+    private fun updateStatusBarHeight() {
+        currentStatusBarHeight = getActualStatusBarHeight()
+        Log.d(TAG, "Status bar height updated: $currentStatusBarHeight")
+    }
+
+    private fun refreshMagnifierCache() {
+        magnifierJob?.cancel()
+        magnifierCache = emptyList()
+        removeAllMagnifierResults()
+
+        // Khởi động lại magnifier mode
+        startMagnifierMode()
+    }
+
+    private fun adjustBubblePositionForOrientation() {
+        floatingBubbleView?.let { bubble ->
+            val params = bubble.layoutParams as? WindowManager.LayoutParams ?: return
+            val screenSize = getRealScreenSizePx()
+
+            // Đảm bảo bubble không bị ra khỏi màn hình
+            params.x = Math.min(params.x, screenSize.x - bubble.width)
+            params.y = Math.min(params.y, screenSize.y - bubble.height)
+            params.x = Math.max(0, params.x)
+            params.y = Math.max(0, params.y)
+
+            try {
+                windowManager.updateViewLayout(bubble, params)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update bubble position after orientation change", e)
+            }
+        }
+    }
+
     private fun checkCircleRectIntersection(
         circleCenterX: Int,
         circleCenterY: Int,
@@ -1159,11 +1272,35 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     private fun getStatusBarHeight(): Int {
+        return currentStatusBarHeight
+    }
+    private fun getActualStatusBarHeight(): Int {
+        // Kiểm tra xem status bar có đang hiển thị không
+        if (isStatusBarHidden()) {
+            return 0
+        }
+
         val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
         if (resourceId > 0) {
             return resources.getDimensionPixelSize(resourceId)
         }
         return (24 * resources.displayMetrics.density).toInt()
+    }
+
+    private fun isStatusBarHidden(): Boolean {
+        return try {
+            // Kiểm tra system UI visibility flags
+            val decorView = (this as? Activity)?.window?.decorView
+            decorView?.let {
+                val flags = it.systemUiVisibility
+                (flags and View.SYSTEM_UI_FLAG_FULLSCREEN) != 0
+            } ?: false
+        } catch (e: Exception) {
+            // Fallback: kiểm tra bằng cách so sánh kích thước màn hình
+            val displayMetrics = resources.displayMetrics
+            val realSize = getRealScreenSizePx()
+            Math.abs(displayMetrics.heightPixels - realSize.y) < 10
+        }
     }
     //endregion
 }
