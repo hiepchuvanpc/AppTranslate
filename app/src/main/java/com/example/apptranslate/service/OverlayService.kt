@@ -1,5 +1,3 @@
-// File: app/src/main/java/com/example/apptranslate/service/OverlayService.kt
-
 package com.example.apptranslate.service
 
 import com.example.apptranslate.MainActivity
@@ -40,6 +38,11 @@ import com.example.apptranslate.data.TranslationManager
 import com.example.apptranslate.ocr.OcrManager
 import com.example.apptranslate.ocr.OcrResult
 import com.example.apptranslate.ui.overlay.*
+import com.example.apptranslate.ui.ImageTranslateActivity
+import com.example.apptranslate.ui.ImageTranslationResult
+import android.Manifest
+import android.content.pm.PackageManager
+
 
 import kotlinx.coroutines.*
 import kotlin.coroutines.resume
@@ -74,6 +77,10 @@ class OverlayService : Service(), BubbleViewListener {
         const val ACTION_SHOW_LANGUAGE_SHEET = "com.example.apptranslate.SHOW_LANGUAGE_SHEET"
         const val ACTION_UPDATE_LANGUAGES = "com.example.apptranslate.UPDATE_LANGUAGES"
         const val ACTION_LANGUAGES_UPDATED_FROM_SERVICE = "com.example.apptranslate.LANGUAGES_UPDATED"
+
+        // New actions for image translate
+        const val ACTION_SHOW_IMAGE_TRANSLATION_RESULTS = "SHOW_IMAGE_TRANSLATION_RESULTS"
+
         const val EXTRA_SOURCE_LANG = "SOURCE_LANG"
         const val EXTRA_TARGET_LANG = "TARGET_LANG"
         private const val OCR_TRANSLATION_DELIMITER = "\n\n"
@@ -93,12 +100,37 @@ class OverlayService : Service(), BubbleViewListener {
     private var languageSheetView: LanguageSheetView? = null
     private var regionSelectOverlay: RegionSelectionOverlay? = null
     private var regionResultOverlay: RegionResultOverlay? = null
+    private var copyTextOverlay: CopyTextOverlay? = null
+    private var imageTranslationOverlay: GlobalTranslationOverlay? = null
     private var currentOrientation = Configuration.ORIENTATION_UNDEFINED
     private var currentStatusBarHeight = 0
     private val orientationChangeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_CONFIGURATION_CHANGED) {
                 handleOrientationChange()
+            }
+        }
+    }
+
+    private val imageTranslationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_SHOW_IMAGE_TRANSLATION_RESULTS) {
+                val results = intent.getParcelableArrayListExtra<ImageTranslationResult>("TRANSLATED_RESULTS")
+                results?.let { showImageTranslationResults(it) }
+            }
+        }
+    }
+    private val cameraPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            Log.d(TAG, "Received camera permission broadcast: ${intent?.action}")
+            if (intent?.action == "com.example.apptranslate.CAMERA_PERMISSION_GRANTED") {
+                val granted = intent.getBooleanExtra("PERMISSION_GRANTED", false)
+                Log.d(TAG, "Camera permission granted: $granted")
+                if (granted) {
+                    startImageTranslateDirectly()
+                } else {
+                    Toast.makeText(this@OverlayService, "Cần cấp quyền camera để sử dụng chức năng dịch ảnh", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -122,6 +154,7 @@ class OverlayService : Service(), BubbleViewListener {
         ContextThemeWrapper(this, R.style.Theme_AppTranslate)
     }
 
+
     // Quản lý trạng thái
     private sealed class ServiceState {
         object IDLE : ServiceState()
@@ -132,10 +165,15 @@ class OverlayService : Service(), BubbleViewListener {
         object LANGUAGE_SELECT_OPEN : ServiceState()
         object REGION_SELECT_ACTIVE : ServiceState()
         object REGION_RESULT_ACTIVE : ServiceState()
+        object COPY_TEXT_ACTIVE : ServiceState()
+        object IMAGE_TRANSLATION_ACTIVE : ServiceState()
     }
     private var currentState: ServiceState = ServiceState.IDLE
 
     private data class TranslatedBlock(val original: OcrResult.Block, val translated: String)
+
+    // Data class for copy text results
+    private data class CopyTextResult(val text: String, val boundingBox: Rect)
     //endregion
 
     //region Vòng đời Service và Listeners
@@ -148,6 +186,10 @@ class OverlayService : Service(), BubbleViewListener {
 
         // Đăng ký receiver cho việc xoay màn hình
         registerReceiver(orientationChangeReceiver, IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED))
+
+        // Đăng ký receiver cho image translation results
+        val cameraPermissionFilter = IntentFilter("com.example.apptranslate.CAMERA_PERMISSION_GRANTED")
+        registerReceiver(cameraPermissionReceiver, cameraPermissionFilter)
         currentOrientation = resources.configuration.orientation
         updateStatusBarHeight()
 
@@ -167,8 +209,11 @@ class OverlayService : Service(), BubbleViewListener {
     override fun onDestroy() {
         try {
             unregisterReceiver(orientationChangeReceiver)
+            unregisterReceiver(imageTranslationReceiver)
+            // Thêm dòng này:
+            unregisterReceiver(cameraPermissionReceiver)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to unregister orientation receiver", e)
+            Log.w(TAG, "Failed to unregister receivers", e)
         }
         stopServiceCleanup()
         super.onDestroy()
@@ -210,6 +255,8 @@ class OverlayService : Service(), BubbleViewListener {
         when (functionId) {
             "GLOBAL" -> setState(ServiceState.GLOBAL_TRANSLATE_ACTIVE)
             "AREA" -> setState(ServiceState.REGION_SELECT_ACTIVE)
+            "IMAGE" -> startImageTranslate()
+            "COPY" -> startCopyText()
             else -> {
                 setState(ServiceState.IDLE)
                 Toast.makeText(this, "Chức năng '$functionId' chưa được triển khai", Toast.LENGTH_SHORT).show()
@@ -256,6 +303,8 @@ class OverlayService : Service(), BubbleViewListener {
             is ServiceState.LANGUAGE_SELECT_OPEN -> removeLanguageSheet()
             is ServiceState.REGION_SELECT_ACTIVE -> removeRegionSelectOverlay()
             is ServiceState.REGION_RESULT_ACTIVE -> removeRegionResultOverlay()
+            is ServiceState.COPY_TEXT_ACTIVE -> removeCopyTextOverlay()
+            is ServiceState.IMAGE_TRANSLATION_ACTIVE -> removeImageTranslationOverlay()
             else -> {}
         }
 
@@ -267,7 +316,9 @@ class OverlayService : Service(), BubbleViewListener {
             is ServiceState.GLOBAL_TRANSLATE_ACTIVE,
             is ServiceState.LANGUAGE_SELECT_OPEN,
             is ServiceState.REGION_SELECT_ACTIVE,
-            is ServiceState.REGION_RESULT_ACTIVE -> View.GONE
+            is ServiceState.REGION_RESULT_ACTIVE,
+            is ServiceState.COPY_TEXT_ACTIVE,
+            is ServiceState.IMAGE_TRANSLATION_ACTIVE -> View.GONE
             else -> View.VISIBLE
         }
 
@@ -291,6 +342,12 @@ class OverlayService : Service(), BubbleViewListener {
             }
             is ServiceState.REGION_RESULT_ACTIVE -> {
                 // Trạng thái hiển thị kết quả vùng đã được xử lý
+            }
+            is ServiceState.COPY_TEXT_ACTIVE -> {
+                // Trạng thái hiển thị kết quả copy text đã được xử lý
+            }
+            is ServiceState.IMAGE_TRANSLATION_ACTIVE -> {
+                // Trạng thái hiển thị kết quả dịch ảnh đã được xử lý
             }
             is ServiceState.LANGUAGE_SELECT_OPEN -> {
                 showLanguageSheet()
@@ -1176,6 +1233,194 @@ class OverlayService : Service(), BubbleViewListener {
     }
     //endregion
 
+    //region Image Translation and Copy Text Functions
+
+    private fun startCopyText() {
+        setState(ServiceState.COPY_TEXT_ACTIVE)
+        performCopyTextCapture()
+    }
+
+    private fun performCopyTextCapture() = serviceScope.launch {
+        // Chờ một chút để animation hoàn thành
+        delay(100L)
+
+        // Chụp ảnh màn hình
+        val fullScreenBitmap = captureScreenWithBubbleHidden()
+        if (fullScreenBitmap == null) {
+            Toast.makeText(this@OverlayService, "Không thể chụp màn hình", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+            return@launch
+        }
+
+        // Cắt bỏ thanh trạng thái
+        val statusBarHeight = getStatusBarHeight()
+        val croppedBitmap = if (statusBarHeight > 0) {
+            try {
+                Bitmap.createBitmap(
+                    fullScreenBitmap, 0, statusBarHeight,
+                    fullScreenBitmap.width, fullScreenBitmap.height - statusBarHeight
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi khi cắt ảnh chụp màn hình", e)
+                fullScreenBitmap.recycle()
+                setState(ServiceState.IDLE)
+                return@launch
+            }
+        } else {
+            fullScreenBitmap
+        }
+
+        if (statusBarHeight > 0) {
+            fullScreenBitmap.recycle()
+        }
+
+        // Thực hiện OCR
+        try {
+            val sourceLang = settingsManager.getSourceLanguageCode() ?: "vi"
+            val ocrResult = withContext(Dispatchers.IO) {
+                ocrManager.recognizeTextFromBitmap(croppedBitmap, sourceLang)
+            }
+
+            val textBlocks = ocrResult.textBlocks.filter {
+                it.text.isNotBlank() && it.boundingBox != null
+            }
+
+            if (textBlocks.isEmpty()) {
+                Toast.makeText(this@OverlayService, "Không tìm thấy văn bản", Toast.LENGTH_SHORT).show()
+                setState(ServiceState.IDLE)
+            } else {
+                val copyResults = textBlocks.map { block ->
+                    val screenRect = mapRectFromBitmapToScreen(block.boundingBox!!)
+                    // Không cần điều chỉnh tọa độ vì mapRectFromBitmapToScreen đã xử lý đúng
+                    CopyTextResult(block.text, screenRect)
+                }
+                showCopyTextResults(copyResults)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi khi thực hiện OCR cho copy text", e)
+            Toast.makeText(this@OverlayService, "Lỗi: ${e.message}", Toast.LENGTH_SHORT).show()
+            setState(ServiceState.IDLE)
+        } finally {
+            croppedBitmap.recycle()
+        }
+    }
+
+    private fun showImageTranslationResults(results: List<ImageTranslationResult>) {
+        // Sử dụng global overlay để hiển thị kết quả dịch ảnh
+        val overlay = showImageTranslationOverlay() ?: return
+        overlay.showLoading()
+        setState(ServiceState.IMAGE_TRANSLATION_ACTIVE)
+
+        overlay.doOnLayout { view ->
+            serviceScope.launch(Dispatchers.Main) {
+                val location = IntArray(2)
+                view.getLocationOnScreen(location)
+                val windowOffsetY = location[1]
+
+                overlay.hideLoading()
+                if (results.isEmpty()) {
+                    Toast.makeText(this@OverlayService, "Không có kết quả dịch", Toast.LENGTH_SHORT).show()
+                } else {
+                    results.forEach { result ->
+                        val finalTopMargin = result.boundingBox.top + getStatusBarHeight() - windowOffsetY
+                        displaySingleImageTranslationResult(
+                            result.boundingBox,
+                            finalTopMargin,
+                            result.translatedText,
+                            overlay
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showCopyTextResults(results: List<CopyTextResult>) {
+        copyTextOverlay = CopyTextOverlay(themedContext) {
+            setState(ServiceState.IDLE)
+        }
+
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            0
+        )
+        windowManager.addView(copyTextOverlay, params)
+        setState(ServiceState.COPY_TEXT_ACTIVE)
+
+        copyTextOverlay?.doOnLayout { view ->
+            serviceScope.launch(Dispatchers.Main) {
+                val location = IntArray(2)
+                view.getLocationOnScreen(location)
+                val windowOffsetY = location[1]
+                val statusBarHeight = getStatusBarHeight()
+
+                // Thêm các kết quả với offset đúng
+                results.forEach { result ->
+                    val finalTopMargin = result.boundingBox.top + statusBarHeight - windowOffsetY
+                    copyTextOverlay?.addCopyTextResult(
+                        Rect(result.boundingBox.left, finalTopMargin,
+                            result.boundingBox.right, finalTopMargin + result.boundingBox.height()),
+                        result.text
+                    )
+                }
+            }
+        }
+    }
+
+    private fun showImageTranslationOverlay(): GlobalTranslationOverlay? {
+        if (imageTranslationOverlay != null) return imageTranslationOverlay
+
+        imageTranslationOverlay = GlobalTranslationOverlay(themedContext, windowManager).apply {
+            onDismiss = {
+                imageTranslationOverlay = null
+                setState(ServiceState.IDLE)
+            }
+        }
+        val flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        val params = createOverlayLayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            flags
+        )
+        windowManager.addView(imageTranslationOverlay, params)
+        return imageTranslationOverlay
+    }
+
+    private fun removeImageTranslationOverlay() {
+        imageTranslationOverlay?.let {
+            if (it.isAttachedToWindow) windowManager.removeView(it)
+        }
+        imageTranslationOverlay = null
+    }
+
+    private fun removeCopyTextOverlay() {
+        copyTextOverlay?.let {
+            if (it.isAttachedToWindow) windowManager.removeView(it)
+        }
+        copyTextOverlay = null
+    }
+
+    private fun displaySingleImageTranslationResult(
+        rect: Rect,
+        finalTopMargin: Int,
+        text: String,
+        overlay: GlobalTranslationOverlay?
+    ) {
+        val resultView = TranslationResultView(this).apply { updateText(text) }
+        val paddingPx = (2f * resources.displayMetrics.density).toInt()
+
+        val params = FrameLayout.LayoutParams(
+            rect.width() + (paddingPx * 2),
+            rect.height() + (paddingPx * 2)
+        ).apply {
+            leftMargin = rect.left - paddingPx
+            topMargin = finalTopMargin - paddingPx
+        }
+        overlay?.addResultView(resultView, params)
+    }
+    //endregion
+
     //region Utilities
 
     private fun handleOrientationChange() {
@@ -1305,6 +1550,71 @@ class OverlayService : Service(), BubbleViewListener {
             val realSize = getRealScreenSizePx()
             Math.abs(displayMetrics.heightPixels - realSize.y) < 10
         }
+    }
+
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestCameraPermissionForImageTranslate() {
+        Log.d(TAG, "Requesting camera permission for image translate")
+
+        // Thử gọi trực tiếp ImageTranslateActivity trước
+        try {
+            val directIntent = Intent(this, ImageTranslateActivity::class.java).apply {
+                action = ImageTranslateActivity.ACTION_TRANSLATE_IMAGE
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(directIntent)
+            Log.d(TAG, "Started ImageTranslateActivity directly")
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start ImageTranslateActivity directly: ${e.message}")
+        }
+
+        // Nếu không thành công, thử qua MainActivity
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                action = "REQUEST_CAMERA_PERMISSION_FOR_IMAGE_TRANSLATE"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            startActivity(intent)
+            Log.d(TAG, "Started MainActivity for camera permission")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start MainActivity for permission: ${e.message}")
+            Toast.makeText(this, "Không thể yêu cầu quyền camera", Toast.LENGTH_SHORT).show()
+        }
+    }
+    private fun startImageTranslateDirectly() {
+        Log.d(TAG, "Starting ImageTranslateActivity directly")
+        try {
+            val intent = Intent(this, ImageTranslateActivity::class.java).apply {
+                action = ImageTranslateActivity.ACTION_TRANSLATE_IMAGE
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            Log.d(TAG, "ImageTranslateActivity started successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start ImageTranslateActivity: ${e.message}")
+            Toast.makeText(this, "Không thể mở camera: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startImageTranslate() {
+        setState(ServiceState.IDLE) // Đóng panel trước
+        Log.d(TAG, "Starting image translate, checking camera permission")
+
+        if (!checkCameraPermission()) {
+            Log.d(TAG, "Camera permission not granted, requesting...")
+            requestCameraPermissionForImageTranslate()
+            return
+        }
+
+        Log.d(TAG, "Camera permission granted, starting image translate directly")
+        startImageTranslateDirectly()
     }
     //endregion
 }

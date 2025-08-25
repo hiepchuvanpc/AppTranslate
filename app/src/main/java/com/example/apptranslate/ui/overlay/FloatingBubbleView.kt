@@ -416,9 +416,9 @@ class FloatingBubbleView(
     private fun createFunctionItems(): List<FunctionItem> {
         return listOf(
             FunctionItem("GLOBAL", R.drawable.ic_global, context.getString(R.string.function_global_translate)),
-            FunctionItem("AREA", R.drawable.ic_crop, context.getString(R.string.function_area_translate),isClickable = true),
-            FunctionItem("IMAGE", R.drawable.ic_image, context.getString(R.string.function_image_translate)),
-            FunctionItem("COPY", R.drawable.ic_copy, context.getString(R.string.function_copy_text)),
+            FunctionItem("AREA", R.drawable.ic_crop, context.getString(R.string.function_area_translate), isClickable = true),
+            FunctionItem("IMAGE", R.drawable.ic_image, context.getString(R.string.function_image_translate), isClickable = true),
+            FunctionItem("COPY", R.drawable.ic_copy, context.getString(R.string.function_copy_text), isClickable = true),
             FunctionItem("AUTO_GLOBAL", R.drawable.ic_auto_play, context.getString(R.string.function_auto_global_translate)),
             FunctionItem("AUTO_AREA", R.drawable.ic_auto_play, context.getString(R.string.function_auto_area_translate))
         )

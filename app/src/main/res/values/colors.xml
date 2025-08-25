@@ -23,7 +23,9 @@
     <color name="outline_variant">#CAC4D0</color>
     <color name="ripple_color">#20000000</color> <!-- Màu gợn sóng khi nhấn, màu đen trong suốt 12.5% -->
     <color name="divider">#1F000000</color>    <!-- Màu đường kẻ phân cách, màu đen trong suốt 12% -->
-    <string name="function_icon_description">Biểu tượng chức năng</string>
     <color name="light_blue_button">#D3E3FF</color>
     <color name="dark_blue_text">#001B3E</color>
+
+    <!-- Overlay colors -->
+    <color name="overlay_background">#80000000</color>
 </resources>

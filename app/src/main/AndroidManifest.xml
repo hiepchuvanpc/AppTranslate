@@ -17,7 +17,10 @@
 
     <!-- For OCR functionality -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                     android:maxSdkVersion="32" />
+    <!-- For Android 13+ (API 33+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <!-- Features -->
 
@@ -51,6 +54,23 @@
             android:name=".service.OverlayService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
+
+        <!-- Image Translation Activity -->
+        <activity
+            android:name=".ui.ImageTranslateActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppTranslate.NoActionBar" />
+
+        <!-- File Provider for camera photos -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
