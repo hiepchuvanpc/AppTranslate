@@ -32,4 +32,6 @@
     <!-- Translation box colors -->
     <color name="translation_box_bg">#F2FFFFFF</color> <!-- trắng mờ, dùng cho light mode -->
     <color name="translation_box_stroke">#22000000</color> <!-- viền mờ -->
+    <color name="translation_background">#E6FFFFFF</color> <!-- nền cho văn bản dịch -->
+    <color name="translation_text">#1C1B1F</color> <!-- màu chữ dịch -->
 </resources>

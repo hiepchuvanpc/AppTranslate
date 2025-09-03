@@ -304,6 +304,9 @@ class ImageTranslateActivity : AppCompatActivity() {
                 val translatedSegments = translatedText.split("\n\n")
 
                 if (blocksToTranslate.size == translatedSegments.size) {
+                    // Lưu bitmap gốc vào file tạm thời
+                    val bitmapPath = saveImageToTemp(bitmap)
+                    
                     val results = blocksToTranslate.zip(translatedSegments).map { (original, translated) ->
                         ImageTranslationResult(
                             originalText = original.text,
@@ -312,8 +315,8 @@ class ImageTranslateActivity : AppCompatActivity() {
                         )
                     }
 
-                    // Gửi kết quả về OverlayService để hiển thị global overlay
-                    sendResultsToOverlayService(results)
+                    // Gửi kết quả về OverlayService để hiển thị với ảnh nền
+                    sendResultsToOverlayService(results, bitmapPath)
 
                 } else {
                     Log.w(TAG, "Mismatch between OCR blocks (${blocksToTranslate.size}) and translated segments (${translatedSegments.size})")
@@ -335,18 +338,43 @@ class ImageTranslateActivity : AppCompatActivity() {
         }
     }
 
-    private fun sendResultsToOverlayService(results: List<ImageTranslationResult>) {
+    private fun sendResultsToOverlayService(results: List<ImageTranslationResult>, bitmapPath: String?) {
+        Log.d(TAG, "Sending ${results.size} translation results to OverlayService with image path: $bitmapPath")
         val intent = Intent(OverlayService.ACTION_SHOW_IMAGE_TRANSLATION_RESULTS).apply {
             setPackage(packageName)
             putParcelableArrayListExtra(EXTRA_TRANSLATED_RESULTS, ArrayList(results))
+            if (bitmapPath != null) {
+                putExtra("BACKGROUND_IMAGE_PATH", bitmapPath)
+            }
         }
         sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent successfully")
 
         // Thông báo thành công và đóng activity
         Toast.makeText(this, "Dịch ảnh thành công! Kết quả sẽ hiển thị trên màn hình.", Toast.LENGTH_LONG).show()
 
         setResult(Activity.RESULT_OK)
         finish()
+    }
+
+    private fun saveImageToTemp(bitmap: Bitmap): String? {
+        return try {
+            val tempDir = File(cacheDir, "image_translation")
+            if (!tempDir.exists()) {
+                tempDir.mkdirs()
+            }
+            
+            val tempFile = File(tempDir, "temp_image_${System.currentTimeMillis()}.jpg")
+            tempFile.outputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
+            
+            Log.d(TAG, "Saved temporary image to: ${tempFile.absolutePath}")
+            tempFile.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save temporary image", e)
+            null
+        }
     }
 }
 

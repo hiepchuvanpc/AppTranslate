@@ -28,11 +28,12 @@ class CopyTextOverlay(
     private val backgroundView: View
     private val containerView: FrameLayout
     private val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    private val usedRects = mutableListOf<Rect>() // Để tránh đè lên nhau
 
     init {
         // Background mờ để có thể nhấn ra ngoài để đóng
         backgroundView = View(context).apply {
-            setBackgroundColor(ContextCompat.getColor(context, R.color.translation_box_bg))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.overlay_background))
             setOnClickListener { onDismiss() }
         }
         addView(backgroundView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -53,6 +54,16 @@ class CopyTextOverlay(
         val viewWidth = rect.width() + (paddingPx * 2)
         val viewHeight = rect.height() + (paddingPx * 2)
 
+        // Tìm vị trí không bị đè lên nhau
+        val finalRect = findNonOverlappingPosition(
+            Rect(rect.left - paddingPx, rect.top - paddingPx,
+                 rect.right + paddingPx, rect.bottom + paddingPx),
+            viewWidth, viewHeight
+        )
+
+        // Thêm vào danh sách đã sử dụng
+        usedRects.add(finalRect)
+
         // Chọn màu chữ tương phản với nền box
         val isNight = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val textColor = if (isNight) {
@@ -71,10 +82,73 @@ class CopyTextOverlay(
             viewWidth,
             viewHeight
         ).apply {
-            leftMargin = rect.left - paddingPx
-            topMargin = rect.top - paddingPx
+            leftMargin = finalRect.left
+            topMargin = finalRect.top
         }
         containerView.addView(resultView, params)
+    }
+
+    private fun findNonOverlappingPosition(originalRect: Rect, width: Int, height: Int): Rect {
+        var candidateRect = Rect(originalRect.left, originalRect.top,
+                                 originalRect.left + width, originalRect.top + height)
+
+        // Kiểm tra xem có đè lên nhau không
+        var attempts = 0
+        val maxAttempts = 20
+        val offsetStep = 20 // pixel để dịch chuyển
+
+        while (attempts < maxAttempts && isOverlapping(candidateRect)) {
+            attempts++
+
+            // Thử dịch chuyển theo các hướng khác nhau
+            when (attempts % 4) {
+                0 -> candidateRect.offset(0, offsetStep) // xuống dưới
+                1 -> candidateRect.offset(offsetStep, 0) // sang phải
+                2 -> candidateRect.offset(0, -offsetStep) // lên trên
+                3 -> candidateRect.offset(-offsetStep, 0) // sang trái
+            }
+
+            // Đảm bảo không ra khỏi màn hình
+            candidateRect = keepWithinBounds(candidateRect, width, height)
+        }
+
+        return candidateRect
+    }
+
+    private fun isOverlapping(rect: Rect): Boolean {
+        return usedRects.any { usedRect ->
+            Rect.intersects(rect, usedRect)
+        }
+    }
+
+    private fun keepWithinBounds(rect: Rect, width: Int, height: Int): Rect {
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+
+        var newLeft = rect.left
+        var newTop = rect.top
+
+        // Đảm bảo không ra khỏi bên phải
+        if (newLeft + width > screenWidth) {
+            newLeft = screenWidth - width
+        }
+
+        // Đảm bảo không ra khỏi bên dưới
+        if (newTop + height > screenHeight) {
+            newTop = screenHeight - height
+        }
+
+        // Đảm bảo không ra khỏi bên trái
+        if (newLeft < 0) {
+            newLeft = 0
+        }
+
+        // Đảm bảo không ra khỏi bên trên
+        if (newTop < 0) {
+            newTop = 0
+        }
+
+        return Rect(newLeft, newTop, newLeft + width, newTop + height)
     }
 
     private fun copyToClipboard(text: String) {

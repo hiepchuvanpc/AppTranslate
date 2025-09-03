@@ -117,12 +117,17 @@ object OcrResultParser {
 
                 if (current != null && next != null) {
                     val gap = next.left - current.right
-                    // Heuristic: A "space" is a gap larger than 20% of the current element's width,
-                    // or a gap larger than 40% of the element's height (for thin characters like 'i' or 'l').
-                    val spaceThresholdWidth = (current.width() * 0.2f).toInt()
-                    val spaceThresholdHeight = (current.height() * 0.4f).toInt()
+                    
+                    // CẢI THIỆN: Giảm threshold để phát hiện khoảng trắng tốt hơn cho tiếng Việt
+                    // Heuristic: A "space" is a gap larger than 15% of the current element's width,
+                    // or a gap larger than 30% of the element's height (giảm từ 20% và 40%)
+                    val spaceThresholdWidth = (current.width() * 0.15f).toInt()
+                    val spaceThresholdHeight = (current.height() * 0.3f).toInt()
+                    
+                    // Thêm điều kiện: nếu gap > 5px thì cũng coi là có space (cho các font nhỏ)
+                    val minGapPixels = 5
 
-                    if (gap > spaceThresholdWidth || gap > spaceThresholdHeight) {
+                    if (gap > spaceThresholdWidth || gap > spaceThresholdHeight || gap > minGapPixels) {
                         stringBuilder.append(" ")
                     }
                 }
