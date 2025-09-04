@@ -23,6 +23,7 @@ import com.example.apptranslate.R
 import com.example.apptranslate.data.SettingsManager
 import com.example.apptranslate.data.TranslationManager
 import com.example.apptranslate.ocr.OcrManager
+import com.example.apptranslate.ocr.OcrResult
 import com.example.apptranslate.service.OverlayService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -294,19 +295,19 @@ class ImageTranslateActivity : AppCompatActivity() {
                 return
             }
 
-            // Thực hiện dịch
-            val combinedText = blocksToTranslate.joinToString(separator = "\n\n") { it.text }
+            // Thực hiện dịch với logic thông minh từ OverlayService
+            val intelligentCombinedText = combineTextIntelligently(blocksToTranslate)
             val translationResult = withContext(Dispatchers.IO) {
-                translationManager.translate(combinedText, sourceLang, targetLang, transSource)
+                translationManager.translate(intelligentCombinedText, sourceLang, targetLang, transSource)
             }
 
             translationResult.onSuccess { translatedText ->
-                val translatedSegments = translatedText.split("\n\n")
+                val translatedSegments = splitTranslatedTextIntelligently(translatedText, blocksToTranslate.size)
 
                 if (blocksToTranslate.size == translatedSegments.size) {
                     // Lưu bitmap gốc vào file tạm thời
                     val bitmapPath = saveImageToTemp(bitmap)
-                    
+
                     val results = blocksToTranslate.zip(translatedSegments).map { (original, translated) ->
                         ImageTranslationResult(
                             originalText = original.text,
@@ -363,18 +364,185 @@ class ImageTranslateActivity : AppCompatActivity() {
             if (!tempDir.exists()) {
                 tempDir.mkdirs()
             }
-            
+
             val tempFile = File(tempDir, "temp_image_${System.currentTimeMillis()}.jpg")
             tempFile.outputStream().use { out ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
             }
-            
+
             Log.d(TAG, "Saved temporary image to: ${tempFile.absolutePath}")
             tempFile.absolutePath
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save temporary image", e)
             null
         }
+    }
+
+    /**
+     * Gộp text thông minh để giữ ngữ cảnh tốt hơn (đơn giản hóa cho dịch ảnh)
+     */
+    private fun combineTextIntelligently(blocks: List<OcrResult.Block>): String {
+        val delimiter = " ◆◇◆ " // Delimiter đặc biệt, ít khả năng xuất hiện trong text thường
+        val texts = blocks.map { it.text.trim() }
+
+        // Phân tích vị trí các blocks để quyết định cách gộp
+        val combinedParts = mutableListOf<String>()
+
+        texts.forEachIndexed { index, text ->
+            if (text.isNotBlank()) {
+                // Kiểm tra xem text có cần nối liền với text trước không
+                val currentBlock = blocks[index]
+                val shouldConnect = if (index > 0) {
+                    val prevBlock = blocks[index - 1]
+                    // Nối liền nếu hai blocks ở gần nhau (cùng dòng hoặc dòng liền kề)
+                    val verticalDistance = kotlin.math.abs(currentBlock.boundingBox?.top ?: 0 - (prevBlock.boundingBox?.bottom ?: 0))
+                    val isCloseVertically = verticalDistance < 20 // 20px threshold
+
+                    // Và text trước không kết thúc bằng dấu câu
+                    val prevText = texts[index - 1].trim()
+                    val prevEndsWithPunctuation = prevText.endsWith(".") || prevText.endsWith("!") ||
+                                                   prevText.endsWith("?") || prevText.endsWith(":") ||
+                                                   prevText.endsWith(";") || prevText.endsWith(",")
+
+                    isCloseVertically && !prevEndsWithPunctuation
+                } else false
+
+                if (shouldConnect && combinedParts.isNotEmpty()) {
+                    // Nối với part trước đó bằng dấu space thay vì delimiter
+                    val lastIndex = combinedParts.size - 1
+                    combinedParts[lastIndex] = combinedParts[lastIndex] + " " + text
+                } else {
+                    // Thêm như part riêng biệt
+                    combinedParts.add(text)
+                }
+            }
+        }
+
+        // Gộp các parts bằng delimiter đặc biệt
+        val result = combinedParts.joinToString(delimiter)
+
+        Log.d(TAG, "Combined ${texts.size} texts into ${combinedParts.size} intelligent parts")
+        Log.d(TAG, "Intelligent combined result: '$result'")
+
+        return result
+    }
+
+    /**
+     * Tách kết quả dịch thông minh theo số lượng blocks gốc (đơn giản hóa cho dịch ảnh)
+     */
+    private fun splitTranslatedTextIntelligently(translatedText: String, expectedParts: Int): List<String> {
+        val delimiter = " ◆◇◆ "
+
+        // Thử tách theo delimiter đặc biệt trước
+        val parts = translatedText.split(delimiter).filter { it.isNotBlank() }
+
+        if (parts.size == expectedParts) {
+            Log.d(TAG, "Perfect split: got ${parts.size} parts as expected")
+            return parts.map { postprocessTranslatedText(it) }
+        }
+
+        // Nếu không khớp, thử các cách tách khác
+        Log.d(TAG, "Delimiter split gave ${parts.size} parts, expected $expectedParts")
+
+        if (parts.size < expectedParts) {
+            // Ít parts hơn mong đợi - thử tách thêm bằng dấu câu
+            val expandedParts = mutableListOf<String>()
+            parts.forEach { part ->
+                // Tách thêm theo dấu câu nếu cần
+                val subParts = part.split(Regex("(?<=[.!?:;])\\s+")).filter { it.isNotBlank() }
+                expandedParts.addAll(subParts)
+            }
+
+            if (expandedParts.size >= expectedParts) {
+                Log.d(TAG, "Extended split to ${expandedParts.size} parts")
+                return expandedParts.take(expectedParts).map { postprocessTranslatedText(it) }
+            }
+        }
+
+        if (parts.size > expectedParts) {
+            // Nhiều parts hơn - gộp lại
+            val consolidatedParts = mutableListOf<String>()
+            val partsPerGroup = parts.size / expectedParts
+            val remainder = parts.size % expectedParts
+
+            var index = 0
+            repeat(expectedParts) { groupIndex ->
+                val groupSize = partsPerGroup + if (groupIndex < remainder) 1 else 0
+                val groupParts = parts.subList(index, index + groupSize)
+                consolidatedParts.add(groupParts.joinToString(" "))
+                index += groupSize
+            }
+
+            Log.d(TAG, "Consolidated ${parts.size} parts into $expectedParts groups")
+            return consolidatedParts.map { postprocessTranslatedText(it) }
+        }
+
+        // Fallback: split equal chunks
+        val fallbackParts = mutableListOf<String>()
+        val chunkSize = translatedText.length / expectedParts
+
+        for (i in 0 until expectedParts) {
+            val start = i * chunkSize
+            val end = if (i == expectedParts - 1) translatedText.length else (i + 1) * chunkSize
+            fallbackParts.add(translatedText.substring(start, end).trim())
+        }
+
+        Log.d(TAG, "Using fallback equal chunk split")
+        return fallbackParts.map { postprocessTranslatedText(it) }
+    }
+
+    /**
+     * Xử lý hậu kỳ text đã dịch: làm sạch và sửa lỗi viết hoa không cần thiết
+     */
+    private fun postprocessTranslatedText(translatedText: String): String {
+        var result = translatedText.trim()
+
+        // Làm sạch khoảng trắng thừa
+        result = result.replace(Regex("\\s+"), " ").trim()
+
+        // Sửa lỗi viết hoa không cần thiết ở đầu câu khi xuống dòng
+        // Chỉ giữ viết hoa nếu là đầu câu thật sự (sau dấu câu)
+        result = fixUnnecessaryCapitalization(result)
+
+        return result
+    }
+
+    /**
+     * Sửa lỗi viết hoa không cần thiết khi xuống dòng
+     */
+    private fun fixUnnecessaryCapitalization(text: String): String {
+        var result = text
+
+        // Pattern để tìm chữ viết hoa không cần thiết ở giữa câu
+        // Chỉ sửa nếu từ viết hoa không đứng sau dấu câu
+        val words = result.split(" ")
+        val fixedWords = mutableListOf<String>()
+
+        words.forEachIndexed { index, word ->
+            if (index == 0) {
+                // Từ đầu tiên - giữ nguyên
+                fixedWords.add(word)
+            } else {
+                val prevWord = words[index - 1]
+                // Kiểm tra xem từ trước có kết thúc bằng dấu câu không
+                val prevEndsWithPunctuation = prevWord.endsWith(".") || prevWord.endsWith("!") ||
+                                               prevWord.endsWith("?") || prevWord.endsWith(":") ||
+                                               prevWord.endsWith(";")
+
+                if (!prevEndsWithPunctuation && word.isNotEmpty() && word[0].isUpperCase()) {
+                    // Từ viết hoa nhưng không phải đầu câu mới -> chuyển thành chữ thường
+                    val fixedWord = word[0].lowercaseChar() + word.substring(1)
+                    Log.d(TAG, "Fixed capitalization: '$word' -> '$fixedWord'")
+                    fixedWords.add(fixedWord)
+                } else {
+                    // Giữ nguyên
+                    fixedWords.add(word)
+                }
+            }
+        }
+
+        result = fixedWords.joinToString(" ")
+        return result
     }
 }
 

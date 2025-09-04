@@ -29,9 +29,9 @@
     <!-- Overlay colors -->
     <color name="overlay_background">#80000000</color>
 
-    <!-- Translation box colors -->
-    <color name="translation_box_bg">#F2FFFFFF</color> <!-- trắng mờ, dùng cho light mode -->
-    <color name="translation_box_stroke">#22000000</color> <!-- viền mờ -->
-    <color name="translation_background">#E6FFFFFF</color> <!-- nền cho văn bản dịch -->
+    <!-- Translation box colors - Cải thiện độ tương phản -->
+    <color name="translation_box_bg">#F5FFFFFF</color> <!-- trắng mờ đậm hơn, dùng cho light mode -->
+    <color name="translation_box_stroke">#33000000</color> <!-- viền đậm hơn để rõ ràng -->
+    <color name="translation_background">#EAFFFFFF</color> <!-- nền cho văn bản dịch -->
     <color name="translation_text">#1C1B1F</color> <!-- màu chữ dịch -->
 </resources>

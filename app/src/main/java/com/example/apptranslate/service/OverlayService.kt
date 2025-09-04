@@ -1,15 +1,20 @@
 package com.example.apptranslate.service
 
-import com.example.apptranslate.MainActivity
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.Rect
@@ -32,28 +37,22 @@ import android.widget.ImageView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
 import com.example.apptranslate.R
 import com.example.apptranslate.data.SettingsManager
 import com.example.apptranslate.data.TranslationManager
 import com.example.apptranslate.ocr.OcrManager
 import com.example.apptranslate.ocr.OcrResult
-import com.example.apptranslate.ui.overlay.*
+import com.example.apptranslate.MainActivity
 import com.example.apptranslate.ui.ImageTranslateActivity
 import com.example.apptranslate.ui.ImageTranslationResult
-import android.Manifest
-import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
-
-import kotlinx.coroutines.*
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.math.roundToInt
-import androidx.core.view.doOnLayout
+import com.example.apptranslate.ui.overlay.*
 import com.example.apptranslate.viewmodel.LanguageViewModel
 import com.example.apptranslate.viewmodel.LanguageViewModelFactory
-import android.content.BroadcastReceiver
-import android.content.IntentFilter
-import android.content.res.Configuration
+import kotlinx.coroutines.*
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.math.roundToInt
 
 @SuppressLint("ViewConstructor")
 class OverlayService : Service(), BubbleViewListener {
@@ -431,7 +430,7 @@ class OverlayService : Service(), BubbleViewListener {
         val allBlocks = mutableListOf<OcrResult.Block>()
         val specialContentMaps = mutableListOf<Map<String, String>>() // Placeholder -> Original content
 
-        Log.d(TAG, "=== SINGLE REQUEST TRANSLATION DEBUG ===")
+        Log.d(TAG, "Starting single request translation for ${processedBlocks.size} blocks")
 
         // Bước 1: Xử lý từng block, tách special content ra
         processedBlocks.forEach { block ->
@@ -476,7 +475,7 @@ class OverlayService : Service(), BubbleViewListener {
             }
 
             val translatedText = translationResult.getOrThrow()
-            
+
             // Phân tách kết quả dịch thông minh theo delimiter đặc biệt
             val translatedParts = splitTranslatedTextIntelligently(translatedText, allBlocks.size)
 
@@ -580,17 +579,17 @@ class OverlayService : Service(), BubbleViewListener {
 
         return Pair(processedText, specialMap)
     }
-    
+
     /**
      * Gộp text thông minh để giữ ngữ cảnh tốt hơn
      * Sử dụng delimiter đặc biệt thay vì \n để không làm mất ngữ cảnh
      */
     private fun combineTextIntelligently(texts: List<String>, blocks: List<OcrResult.Block>): String {
         val delimiter = " ◆◇◆ " // Delimiter đặc biệt, ít khả năng xuất hiện trong text thường
-        
+
         // Phân tích vị trí các blocks để quyết định cách gộp
         val combinedParts = mutableListOf<String>()
-        
+
         texts.forEachIndexed { index, text ->
             if (text.isNotBlank()) {
                 // Kiểm tra xem text có cần nối liền với text trước không
@@ -600,16 +599,16 @@ class OverlayService : Service(), BubbleViewListener {
                     // Nối liền nếu hai blocks ở gần nhau (cùng dòng hoặc dòng liền kề)
                     val verticalDistance = kotlin.math.abs(currentBlock.boundingBox?.top ?: 0 - (prevBlock.boundingBox?.bottom ?: 0))
                     val isCloseVertically = verticalDistance < 20 // 20px threshold
-                    
+
                     // Và text trước không kết thúc bằng dấu câu
                     val prevText = texts[index - 1].trim()
-                    val prevEndsWithPunctuation = prevText.endsWith(".") || prevText.endsWith("!") || 
+                    val prevEndsWithPunctuation = prevText.endsWith(".") || prevText.endsWith("!") ||
                                                    prevText.endsWith("?") || prevText.endsWith(":") ||
                                                    prevText.endsWith(";") || prevText.endsWith(",")
-                    
+
                     isCloseVertically && !prevEndsWithPunctuation
                 } else false
-                
+
                 if (shouldConnect && combinedParts.isNotEmpty()) {
                     // Nối với part trước đó bằng dấu space thay vì delimiter
                     val lastIndex = combinedParts.size - 1
@@ -620,33 +619,33 @@ class OverlayService : Service(), BubbleViewListener {
                 }
             }
         }
-        
+
         // Gộp các parts bằng delimiter đặc biệt
         val result = combinedParts.joinToString(delimiter)
-        
+
         Log.d(TAG, "Combined ${texts.size} texts into ${combinedParts.size} intelligent parts")
         Log.d(TAG, "Intelligent combined result: '$result'")
-        
+
         return result
     }
-    
+
     /**
      * Tách kết quả dịch thông minh theo số lượng blocks gốc
      */
     private fun splitTranslatedTextIntelligently(translatedText: String, expectedParts: Int): List<String> {
         val delimiter = " ◆◇◆ "
-        
+
         // Thử tách theo delimiter đặc biệt trước
         val parts = translatedText.split(delimiter).filter { it.isNotBlank() }
-        
+
         if (parts.size == expectedParts) {
             Log.d(TAG, "Perfect split: got ${parts.size} parts as expected")
             return parts
         }
-        
+
         // Nếu không khớp, thử các cách tách khác
         Log.d(TAG, "Delimiter split gave ${parts.size} parts, expected $expectedParts")
-        
+
         if (parts.size < expectedParts) {
             // Ít parts hơn mong đợi - thử tách thêm bằng dấu câu
             val expandedParts = mutableListOf<String>()
@@ -655,19 +654,19 @@ class OverlayService : Service(), BubbleViewListener {
                 val subParts = part.split(Regex("(?<=[.!?:;])\\s+")).filter { it.isNotBlank() }
                 expandedParts.addAll(subParts)
             }
-            
+
             if (expandedParts.size >= expectedParts) {
                 Log.d(TAG, "Extended split to ${expandedParts.size} parts")
                 return expandedParts.take(expectedParts)
             }
         }
-        
+
         if (parts.size > expectedParts) {
             // Nhiều parts hơn - gộp lại
             val consolidatedParts = mutableListOf<String>()
             val partsPerGroup = parts.size / expectedParts
             val remainder = parts.size % expectedParts
-            
+
             var index = 0
             repeat(expectedParts) { groupIndex ->
                 val groupSize = partsPerGroup + if (groupIndex < remainder) 1 else 0
@@ -675,11 +674,11 @@ class OverlayService : Service(), BubbleViewListener {
                 consolidatedParts.add(groupParts.joinToString(" "))
                 index += groupSize
             }
-            
+
             Log.d(TAG, "Consolidated ${parts.size} parts into ${consolidatedParts.size} parts")
             return consolidatedParts
         }
-        
+
         // Fallback: trả về parts hiện tại
         Log.d(TAG, "Using fallback: returning ${parts.size} parts")
         return parts
@@ -1173,9 +1172,9 @@ class OverlayService : Service(), BubbleViewListener {
 
         // 4. [BỎ] Không tự động viết hoa sau dấu câu vì có thể là xuống dòng trong đoạn
         // Chỉ viết hoa đầu câu đầu tiên nếu text chưa có chữ hoa
-        if (processedText.isNotEmpty() && processedText[0].isLowerCase()) {
-            processedText = processedText[0].uppercase() + processedText.substring(1)
-        }
+        // if (processedText.isNotEmpty() && processedText[0].isLowerCase()) {
+        //     processedText = processedText[0].uppercase() + processedText.substring(1)
+        // }
 
         // 5. Trim
         processedText = processedText.trim()
@@ -1592,40 +1591,29 @@ class OverlayService : Service(), BubbleViewListener {
     }
 
     private fun hasSignificantStyleDifference(text1: String, text2: String, height1: Int, height2: Int): Boolean {
-        // Kiểm tra 1: Sự khác biệt về kích thước (title vs description)
+        // ✨ [CẢI TIẾN] Thêm các quy tắc chặt chẽ hơn ✨
+
+        // Kiểm tra 1: Chênh lệch lớn về chiều cao (font size)
         val heightRatio = maxOf(height1, height2).toFloat() / minOf(height1, height2).toFloat()
-        if (heightRatio > 1.4) { // Chênh lệch chiều cao > 40%
+        if (heightRatio > 1.5) { // Nếu chiều cao chênh lệch > 50%
             Log.d(TAG, "    Style check: Height ratio = $heightRatio (significant)")
             return true
         }
 
-        // Kiểm tra 2: Phát hiện pattern title/header (ngắn, chữ hoa, ít dấu câu)
-        val isTitlePattern = text1.length <= 50 && // Ngắn
-                           (text1.count { it.isUpperCase() }.toFloat() / text1.length > 0.3 || // Nhiều chữ hoa
-                            text1.all { it.isLetterOrDigit() || it.isWhitespace() || it in ".-_" }) // Ít ký tự đặc biệt
-
-        val isDescriptionPattern = text2.length > 20 && // Dài hơn
-                                 text2.contains(' ') && // Có khoảng trắng
-                                 text2.count { it in ".,!?;:" } > 0 // Có dấu câu
-
+        // Kiểm tra 2: Pattern Title vs Description (ngắn vs dài)
+        val isTitlePattern = text1.length < 30 && !text1.contains("\n")
+        val isDescriptionPattern = text2.length > 50 || text2.contains("\n")
         if (isTitlePattern && isDescriptionPattern) {
-            Log.d(TAG, "    Style check: Title-Description pattern detected")
+            Log.d(TAG, "    Style check: Title-Description pattern detected by length")
             return true
         }
 
-        // Kiểm tra 3: Text quá khác biệt về độ dài (title ngắn vs paragraph dài)
-        val lengthRatio = maxOf(text1.length, text2.length).toFloat() / minOf(text1.length, text2.length).toFloat()
-        if (lengthRatio > 3.0 && minOf(text1.length, text2.length) < 30) {
-            Log.d(TAG, "    Style check: Length ratio = $lengthRatio (very different)")
+        // Kiểm tra 3: Pattern Title (ít dấu câu) vs Description (nhiều dấu câu)
+        val text1PunctuationCount = text1.count { it in ".,!?;:" }
+        val text2PunctuationCount = text2.count { it in ".,!?;:" }
+        if (isTitlePattern && text1PunctuationCount == 0 && text2PunctuationCount > 0) {
+            Log.d(TAG, "    Style check: Title-Description pattern detected by punctuation")
             return true
-        }
-
-        // Kiểm tra 4: Phát hiện text dính chữ (không có khoảng trắng trong text dài)
-        val hasSpaceIssue = (text1.length > 10 && !text1.contains(' ')) ||
-                           (text2.length > 10 && !text2.contains(' '))
-        if (hasSpaceIssue) {
-            Log.d(TAG, "    Style check: Potential text merging issue detected")
-            // Không return true ở đây vì đây là vấn đề OCR, không phải style
         }
 
         return false
@@ -2360,16 +2348,41 @@ class OverlayService : Service(), BubbleViewListener {
         text: String,
         overlay: GlobalTranslationOverlay?
     ) {
-        val resultView = TranslationResultView(this).apply { updateText(text) }
-        val paddingPx = (3f * resources.displayMetrics.density).toInt()
+        // ✨ [THAY ĐỔI] Sử dụng TranslationResultView với logic co giãn thông minh ✨
+        val resultView = TranslationResultView(this)
 
-        val params = FrameLayout.LayoutParams(
-            screenRect.width() + (paddingPx * 2),
-            screenRect.height() + (paddingPx * 2)
-        ).apply {
-            leftMargin = screenRect.left - paddingPx
-            topMargin = finalTopMargin - paddingPx
+        // Khởi tạo kích thước ban đầu cho view dựa trên box của OCR
+        // Kích thước này sẽ được tự động điều chỉnh nếu cần
+        val paddingPx = (6f * resources.displayMetrics.density).toInt() // Thêm padding cho thoáng
+        val initialWidth = screenRect.width() + paddingPx
+        val initialHeight = screenRect.height() + paddingPx
+        resultView.initializeSize(initialWidth, initialHeight)
+
+        // Lắng nghe sự kiện thay đổi kích thước từ TranslationResultView
+        resultView.setOnSizeChangeListener { newWidth, newHeight ->
+            val currentParams = resultView.layoutParams as? FrameLayout.LayoutParams
+            if (currentParams != null && (currentParams.width != newWidth || currentParams.height != newHeight)) {
+                currentParams.width = newWidth
+                currentParams.height = newHeight
+                // Cập nhật lại layout nếu kích thước thay đổi
+                resultView.layoutParams = currentParams
+            }
         }
+
+        // Cập nhật text, logic co giãn sẽ tự chạy
+        resultView.updateText(text)
+
+        // Tạo LayoutParams để định vị view trên màn hình
+        val params = FrameLayout.LayoutParams(
+            // Lấy kích thước cuối cùng sau khi đã tính toán
+            resultView.layoutParams?.width ?: initialWidth,
+            resultView.layoutParams?.height ?: initialHeight
+        ).apply {
+            leftMargin = screenRect.left - (paddingPx / 2)
+            topMargin = finalTopMargin - (paddingPx / 2)
+        }
+
+        // Thêm view vào overlay
         overlay?.addResultView(resultView, params)
     }
 

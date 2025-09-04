@@ -1,3 +1,5 @@
+// in file: app/src/main/java/com/example/apptranslate/ui/overlay/GlobalTranslationOverlay.kt
+
 package com.example.apptranslate.ui.overlay
 
 import android.annotation.SuppressLint
@@ -46,6 +48,22 @@ class GlobalTranslationOverlay(
                        adjustedParams.leftMargin + adjustedParams.width,
                        adjustedParams.topMargin + adjustedParams.height)
         usedRects.add(rect)
+    }
+
+    /**
+     * Lấy tất cả các result views đã được thêm vào container
+     * Dùng cho Smart Box Expansion để tránh overlap
+     */
+    fun getAllResultViews(): List<View> {
+        val resultViews = mutableListOf<View>()
+        for (i in 0 until binding.container.childCount) {
+            val child = binding.container.getChildAt(i)
+            // Loại trừ các view không phải translation result (như loading indicator)
+            if (child != binding.loadingIndicator && child != binding.buttonClose) {
+                resultViews.add(child)
+            }
+        }
+        return resultViews
     }
 
     private fun adjustPositionToAvoidOverlap(originalParams: LayoutParams): LayoutParams {

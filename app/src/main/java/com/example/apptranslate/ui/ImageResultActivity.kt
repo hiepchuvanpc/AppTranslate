@@ -156,6 +156,25 @@ class ImageResultActivity : AppCompatActivity() {
 
     private fun addTranslationResultView(rect: Rect, originalText: String, translatedText: String) {
         val resultView = TranslationResultView(this).apply {
+            // Khởi tạo kích thước ban đầu cho smart sizing
+            initializeSize(rect.width(), rect.height())
+
+            // Set listener để điều chỉnh layout khi box cần mở rộng
+            setOnSizeChangeListener { newWidth, newHeight ->
+                val currentParams = layoutParams as? FrameLayout.LayoutParams
+                if (currentParams != null) {
+                    Log.d(TAG, "Expanding translation box from ${currentParams.width}x${currentParams.height} to ${newWidth}x${newHeight}")
+
+                    // Cập nhật size nhưng không thay đổi vị trí
+                    currentParams.width = newWidth
+                    currentParams.height = newHeight
+
+                    // Không cần điều chỉnh margin vì chúng ta muốn giữ vị trí gốc
+                    layoutParams = currentParams
+                }
+            }
+
+            // Cập nhật text với logic thông minh
             updateText(translatedText)
 
             // Thêm long press để hiển thị text gốc

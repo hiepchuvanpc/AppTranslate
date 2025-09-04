@@ -11,9 +11,9 @@
         android:gravity="center"
         android:text="..."
         android:textColor="@color/primary_text"
-        android:maxLines="3"
         android:includeFontPadding="false"
-        android:padding="3dp" />
+        android:padding="3dp"
+        android:lineSpacingMultiplier="1.1" />
 
     <ProgressBar
         android:id="@+id/loadingIndicator"
