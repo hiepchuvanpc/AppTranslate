@@ -41,6 +41,7 @@ class GlobalTranslationOverlay(
     fun addResultView(view: View, params: LayoutParams) {
         // Cải thiện vị trí để tránh đè lên nhau
         val adjustedParams = adjustPositionToAvoidOverlap(params)
+
         binding.container.addView(view, adjustedParams)
 
         // Thêm rect vào danh sách đã sử dụng
@@ -48,22 +49,6 @@ class GlobalTranslationOverlay(
                        adjustedParams.leftMargin + adjustedParams.width,
                        adjustedParams.topMargin + adjustedParams.height)
         usedRects.add(rect)
-    }
-
-    /**
-     * Lấy tất cả các result views đã được thêm vào container
-     * Dùng cho Smart Box Expansion để tránh overlap
-     */
-    fun getAllResultViews(): List<View> {
-        val resultViews = mutableListOf<View>()
-        for (i in 0 until binding.container.childCount) {
-            val child = binding.container.getChildAt(i)
-            // Loại trừ các view không phải translation result (như loading indicator)
-            if (child != binding.loadingIndicator && child != binding.buttonClose) {
-                resultViews.add(child)
-            }
-        }
-        return resultViews
     }
 
     private fun adjustPositionToAvoidOverlap(originalParams: LayoutParams): LayoutParams {

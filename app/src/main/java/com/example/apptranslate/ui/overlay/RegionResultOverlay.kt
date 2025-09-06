@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View // << Quan trọng
 import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
 import com.example.apptranslate.R
@@ -43,22 +44,15 @@ class RegionResultOverlay(
         addView(loadingView, loadingParams)
     }
 
-    fun addTranslationResult(position: Rect, translatedText: String) {
-        val resultView = TranslationResultView(context).apply {
-            updateText(translatedText)
-        }
-
-        val paddingPx = (2f * context.resources.displayMetrics.density).toInt()
+    fun addTranslationResult(position: Rect, resultView: View) {
         val params = LayoutParams(
-            position.width() + (paddingPx * 2),
-            position.height() + (paddingPx * 2)
+            position.width(),
+            position.height()
         ).apply {
-            leftMargin = position.left - paddingPx
-            topMargin = position.top - paddingPx
+            leftMargin = position.left
+            topMargin = position.top
         }
-
         addView(resultView, params)
-        resultViews.add(resultView)
     }
 
     fun showLoading() {

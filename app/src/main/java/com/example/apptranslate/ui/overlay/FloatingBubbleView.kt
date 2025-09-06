@@ -161,7 +161,9 @@ class FloatingBubbleView(
             // Gán listener để đóng panel khi chạm ra ngoài
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                    listener?.onMoveClicked() // onMoveClicked sẽ trigger đóng panel
+                    // ✨ FIX: Đóng panel và về trạng thái idle thay vì chuyển sang move
+                    closePanel()
+                    listener?.onHomeClicked() // Về trạng thái home/idle
                     true
                 } else {
                     false
@@ -173,8 +175,11 @@ class FloatingBubbleView(
     /**
     * Đóng panel điều khiển với animation.
     */
-    fun closePanel() {
-        if (!isPanelOpen) return
+    fun closePanel(onComplete: (() -> Unit)? = null) {
+        if (!isPanelOpen) {
+            onComplete?.invoke()
+            return
+        }
         isPanelOpen = false
 
         // Gỡ bỏ listener chạm bên ngoài
@@ -207,9 +212,18 @@ class FloatingBubbleView(
             binding.bubbleView.animate().alpha(1f).setDuration(150).withEndAction {
                 // Bắt đầu hẹn giờ tự thu gọn sau khi bubble hiện lại
                 startCollapseTimer()
+                // 🔧 CẢI TIẾN: Gọi callback khi animation hoàn thành
+                onComplete?.invoke()
             }.start()
 
         }.start()
+    }
+
+    /**
+     * Kiểm tra xem panel có đang mở không
+     */
+    fun isPanelOpen(): Boolean {
+        return isPanelOpen
     }
 
     fun updateBubbleAppearance(appearance: BubbleAppearance) {
